@@ -104,4 +104,36 @@ subtest 'arrays 0件で空配列' => sub {
     $db->close();
 };
 
+# --- spec#9. run + hashes（メタ付き AoH・attrs/order/count 確認）---
+subtest 'hashes メタ付きAoH' => sub {
+    my $db = DBOBJ->new('develop');
+    $db->run("CREATE TEMP TABLE ${TBL}_h (id INT, val TEXT)");
+    $db->run("INSERT INTO ${TBL}_h VALUES (1, 'a'), (2, 'b')");
+    $db->run("SELECT id, val FROM ${TBL}_h ORDER BY id");
+    my $result = $db->hashes();
+
+    is(ref($result), 'ARRAY', '配列リファレンス');
+    is(scalar(@$result), 3, 'meta + 2行 = 3要素');
+
+    my $meta = $result->[0]{'#'};
+    is_deeply($meta->{order}, ['id', 'val'], 'order が正しい');
+    is($meta->{attrs}{id},  'num', 'id は num');
+    is($meta->{attrs}{val}, 'str', 'val は str');
+    is($meta->{count}, 2, 'count が正しい');
+
+    is_deeply($result->[1], {id => 1, val => 'a'}, '1行目のデータ');
+    is_deeply($result->[2], {id => 2, val => 'b'}, '2行目のデータ');
+    $db->close();
+};
+
+# --- spec#10. hashes 0件なら [] ---
+subtest 'hashes 0件で空配列' => sub {
+    my $db = DBOBJ->new('develop');
+    $db->run("CREATE TEMP TABLE ${TBL}_h0 (id INT)");
+    $db->run("SELECT id FROM ${TBL}_h0");
+    my $result = $db->hashes();
+    is_deeply($result, [], '0件なら []');
+    $db->close();
+};
+
 done_testing;

@@ -126,6 +126,41 @@ sub arrays {
     return [ map { [ map { _normalize($_) } @$_ ] } @$rows ];
 }
 
+sub _build_meta {
+    my ($sth, $count) = @_;
+    my $names = $sth->{NAME};
+    my $types = $sth->{TYPE};
+    my %attrs;
+    for my $i (0 .. $#$names) {
+        $attrs{$names->[$i]} = $NUM_TYPES{$types->[$i]} ? 'num' : 'str';
+    }
+    return {
+        '#' => {
+            attrs => \%attrs,
+            order => [@$names],
+            count => $count,
+        }
+    };
+}
+
+sub hashes {
+    my ($self) = @_;
+    my $meta = _build_meta($self->{sth}, 0);  # count は後で確定
+
+    my $rows = $self->{sth}->fetchall_arrayref({});
+    return [] unless @$rows;
+
+    # undef を '' に変換
+    for my $row (@$rows) {
+        for my $key (keys %$row) {
+            $row->{$key} = '' unless defined $row->{$key};
+        }
+    }
+
+    $meta->{'#'}{count} = scalar(@$rows);
+    return [$meta, @$rows];
+}
+
 sub close {
     my ($self) = @_;
     $self->{sth}->finish() if $self->{sth};
