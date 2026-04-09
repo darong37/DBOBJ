@@ -57,6 +57,11 @@ subtest 'get で1行1列以外は die' => sub {
     $db->run("INSERT INTO ${TBL}_g VALUES (1), (2)");
     $db->run("SELECT id FROM ${TBL}_g");
     dies_ok { $db->get() } '複数行で die';
+
+    # 0件
+    $db->run("CREATE TEMP TABLE ${TBL}_g0 (id INT)");
+    $db->run("SELECT id FROM ${TBL}_g0");
+    dies_ok { $db->get() } '0件で die';
     $db->close();
 };
 

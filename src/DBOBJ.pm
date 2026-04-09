@@ -103,8 +103,9 @@ sub _normalize {
 sub get {
     my ($self) = @_;
     my $rows = $self->{sth}->fetchall_arrayref();
-    die "DBOBJ.get: expected 1 row and 1 col, got "
-        . scalar(@$rows) . " rows " . ($rows->[0] ? scalar(@{$rows->[0]}) : 0) . " cols"
+    die sprintf("DBOBJ.get: expected 1 row and 1 col, got %d rows, %d cols",
+        scalar(@$rows),
+        $rows->[0] ? scalar(@{$rows->[0]}) : 0)
         unless @$rows == 1 && @{$rows->[0]} == 1;
     return _normalize($rows->[0][0]);
 }
@@ -112,6 +113,7 @@ sub get {
 sub list {
     my ($self) = @_;
     my $ncols = $self->{sth}{NUM_OF_FIELDS};
+    die "DBOBJ.list: no active statement" unless defined $ncols;
     die "DBOBJ.list: expected 1 col, got $ncols" unless $ncols == 1;
     my $rows = $self->{sth}->fetchall_arrayref();
     return map { _normalize($_->[0]) } @$rows;
