@@ -8,38 +8,34 @@ use Spool;
 # テスト用テーブル名（他テストと衝突しないよう一意にする）
 my $TBL = 'dbobj_test_' . $$;
 
-# --- 1. 接続成功・close() ---
+# --- spec#1. 接続成功・close() ---
 subtest '接続成功・close()' => sub {
     my $db = DBOBJ->new('develop');
     isa_ok($db, 'DBOBJ');
     lives_ok { $db->close() } 'close() が die しない';
 };
 
-# --- 2. 環境変数未設定で die ---
+# --- spec#2. 環境変数未設定で die ---
 subtest '環境変数未設定で die' => sub {
     local $ENV{PGHOST} = '';
     dies_ok { DBOBJ->new('develop') } 'PGHOST 未設定で die';
 };
 
-# --- 3. dbname 未指定で die ---
+# --- spec#3. dbname 未指定で die ---
 subtest 'dbname 未指定で die' => sub {
     dies_ok { DBOBJ->new() } 'dbname 未指定で die';
 };
 
-# --- spec#12. prepare + execute バインド変数 ---
-subtest 'prepare + execute バインド変数' => sub {
+# --- spec#4. PGDATABASE を参照しない ---
+subtest 'PGDATABASE を参照しない' => sub {
+    local $ENV{PGDATABASE} = 'nonexistent_db_xyz';
     my $db = DBOBJ->new('develop');
-    $db->run("CREATE TEMP TABLE $TBL (id INT, val TEXT)");
-    $db->run("INSERT INTO $TBL VALUES (1, 'a'), (2, 'b')");
-
-    $db->prepare("SELECT val FROM $TBL WHERE id = ?");
-    $db->execute(1);
-    my @rows = $db->list();
-    is_deeply(\@rows, ['a'], 'バインド変数で絞り込める');
+    $db->run("SELECT 1");
+    is($db->get(), 1, 'PGDATABASE ではなく dbname で接続される');
     $db->close();
 };
 
-# --- spec#4. run + get（スカラー1値）---
+# --- spec#5. run + get（スカラー1値）---
 subtest 'get スカラー1値' => sub {
     my $db = DBOBJ->new('develop');
     $db->run("SELECT 42");
@@ -48,7 +44,7 @@ subtest 'get スカラー1値' => sub {
     $db->close();
 };
 
-# --- spec#5. get で1行1列以外は die ---
+# --- spec#6. get で1行1列以外は die ---
 subtest 'get で1行1列以外は die' => sub {
     my $db = DBOBJ->new('develop');
     $db->run("SELECT 1, 2");
@@ -66,7 +62,7 @@ subtest 'get で1行1列以外は die' => sub {
     $db->close();
 };
 
-# --- spec#6. run + list（単一カラム）---
+# --- spec#7. run + list（単一カラム）---
 subtest 'list 単一カラム全件' => sub {
     my $db = DBOBJ->new('develop');
     $db->run("CREATE TEMP TABLE ${TBL}_l (id INT)");
@@ -77,7 +73,7 @@ subtest 'list 単一カラム全件' => sub {
     $db->close();
 };
 
-# --- spec#7. list で1列以外は die ---
+# --- spec#8. list で1列以外は die ---
 subtest 'list で1列以外は die' => sub {
     my $db = DBOBJ->new('develop');
     $db->run("SELECT 1, 2");
@@ -85,7 +81,7 @@ subtest 'list で1列以外は die' => sub {
     $db->close();
 };
 
-# --- spec#8. run + arrays（AoA）---
+# --- spec#9. run + arrays（AoA）---
 subtest 'arrays 全件AoA' => sub {
     my $db = DBOBJ->new('develop');
     $db->run("CREATE TEMP TABLE ${TBL}_a (id INT, val TEXT)");
@@ -96,6 +92,7 @@ subtest 'arrays 全件AoA' => sub {
     $db->close();
 };
 
+# --- spec#10. arrays 0件なら [] ---
 subtest 'arrays 0件で空配列' => sub {
     my $db = DBOBJ->new('develop');
     $db->run("CREATE TEMP TABLE ${TBL}_a0 (id INT)");
@@ -105,7 +102,7 @@ subtest 'arrays 0件で空配列' => sub {
     $db->close();
 };
 
-# --- spec#9. run + hashes（メタ付き AoH・attrs/order/count 確認）---
+# --- spec#11. run + hashes（メタ付き AoH・attrs/order/count 確認）---
 subtest 'hashes メタ付きAoH' => sub {
     my $db = DBOBJ->new('develop');
     $db->run("CREATE TEMP TABLE ${TBL}_h (id INT, val TEXT)");
@@ -120,14 +117,14 @@ subtest 'hashes メタ付きAoH' => sub {
     is_deeply($meta->{order}, ['id', 'val'], 'order が正しい');
     is($meta->{attrs}{id},  'num', 'id は num');
     is($meta->{attrs}{val}, 'str', 'val は str');
-    is($meta->{count}, 2, 'count が正しい');
+    is($meta->{count}, 2, 'count は meta 自身を含まないデータ行数');
 
     is_deeply($result->[1], {id => 1, val => 'a'}, '1行目のデータ');
     is_deeply($result->[2], {id => 2, val => 'b'}, '2行目のデータ');
     $db->close();
 };
 
-# --- spec#10. hashes 0件なら [] ---
+# --- spec#12. hashes 0件なら [] ---
 subtest 'hashes 0件で空配列' => sub {
     my $db = DBOBJ->new('develop');
     $db->run("CREATE TEMP TABLE ${TBL}_h0 (id INT)");
@@ -137,7 +134,7 @@ subtest 'hashes 0件で空配列' => sub {
     $db->close();
 };
 
-# --- spec#11. NULL → '' への変換確認 ---
+# --- spec#13. NULL → '' への変換確認 ---
 subtest 'NULL を空文字に変換' => sub {
     my $db = DBOBJ->new('develop');
     $db->run("CREATE TEMP TABLE ${TBL}_null (id INT, val TEXT)");
@@ -165,7 +162,20 @@ subtest 'NULL を空文字に変換' => sub {
     $db->close();
 };
 
-# --- spec#13. DML（INSERT/UPDATE/DELETE）---
+# --- spec#14. prepare + execute バインド変数 ---
+subtest 'prepare + execute バインド変数' => sub {
+    my $db = DBOBJ->new('develop');
+    $db->run("CREATE TEMP TABLE $TBL (id INT, val TEXT)");
+    $db->run("INSERT INTO $TBL VALUES (1, 'a'), (2, 'b')");
+
+    $db->prepare("SELECT val FROM $TBL WHERE id = ?");
+    $db->execute(1);
+    my @rows = $db->list();
+    is_deeply(\@rows, ['a'], 'バインド変数で絞り込める');
+    $db->close();
+};
+
+# --- spec#15. DML（INSERT/UPDATE/DELETE）---
 subtest 'DML 実行' => sub {
     my $db = DBOBJ->new('develop');
     $db->run("CREATE TEMP TABLE ${TBL}_dml (id INT, val TEXT)");
@@ -179,35 +189,52 @@ subtest 'DML 実行' => sub {
     $db->close();
 };
 
-# --- spec#14. psql($sqlfile) ファイル実行 ---
+# --- spec#16. run で SQL 構文エラー時 die ---
+subtest 'run SQL 構文エラーで die' => sub {
+    my $db = DBOBJ->new('develop');
+    dies_ok { $db->run("SELCT * FROOOM nowhere") } 'SQL 構文エラーで die';
+    $db->close();
+};
+
+# --- spec#17. prepare + execute で SQL エラー時 die ---
+subtest 'prepare + execute SQL エラーで die' => sub {
+    my $db = DBOBJ->new('develop');
+    dies_ok {
+        $db->prepare("SELECT val FROM nonexistent_table_xyz WHERE id = ?");
+        $db->execute(1);
+    } 'prepare + execute で SQL エラー時 die';
+    $db->close();
+};
+
+# --- spec#18. psql($sqlfile) ファイル実行 ---
 subtest 'psql SQLファイル実行' => sub {
     my $db = DBOBJ->new('develop');
     lives_ok { $db->psql('test/insert.sql') } 'psql() が die しない';
     $db->close();
 };
 
-# --- spec#15. psql でファイル不在の場合 die ---
+# --- spec#19. psql でファイル不在の場合 die ---
 subtest 'psql ファイル不在で die' => sub {
     my $db = DBOBJ->new('develop');
     dies_ok { $db->psql('test/nonexistent.sql') } 'ファイル不在で die';
     $db->close();
 };
 
-# --- spec#16. psql で終了コード非0の場合 die ---
+# --- spec#20. psql で終了コード非0の場合 die ---
 subtest 'psql SQL エラーで die' => sub {
     my $db = DBOBJ->new('develop');
     dies_ok { $db->psql('test/error.sql') } 'SQL エラーで die';
     $db->close();
 };
 
-# --- spec#17. psql で NOTICE が出ても die しない ---
+# --- spec#21. psql で NOTICE が出ても die しない ---
 subtest 'psql NOTICE は die しない' => sub {
     my $db = DBOBJ->new('develop');
     lives_ok { $db->psql('test/notice.sql') } 'NOTICE があっても die しない';
     $db->close();
 };
 
-# --- spec#18. spool() 書き出し・読み返し確認 ---
+# --- spec#22. spool() 書き出し・読み返し確認 ---
 subtest 'spool 書き出しと読み返し' => sub {
     my $db = DBOBJ->new('develop');
     my $sid = 'dbobjtest' . $$;
@@ -217,7 +244,7 @@ subtest 'spool 書き出しと読み返し' => sub {
     $db->run("SELECT id, val FROM ${TBL}_s ORDER BY id");
     lives_ok { $db->spool($sid) } 'spool() が die しない';
 
-    # rows.do を直接読み返す（確認前の状態）
+    # rows.do を直接読み返す
     my $rows = do "/tmp/spool/$sid/rows.do";
     is(scalar(@$rows), 2, '2件読み返せる');
     is($rows->[0]{val}, 'x', '1件目の val');
@@ -231,7 +258,7 @@ subtest 'spool 書き出しと読み返し' => sub {
     $db->close();
 };
 
-# --- spec#19. spool 0件でも作成・attrs/order 保持・count=0 ---
+# --- spec#23. spool 0件でも作成・attrs/order 保持・count=0 ---
 subtest 'spool 0件でも正しく作成' => sub {
     my $db = DBOBJ->new('develop');
     my $sid = 'dbobjtest0' . $$;
@@ -245,6 +272,23 @@ subtest 'spool 0件でも正しく作成' => sub {
     ok(exists $meta_wrap->{'#'}{attrs}{id},  'attrs に id が存在');
     ok(exists $meta_wrap->{'#'}{attrs}{val}, 'attrs に val が存在');
     is_deeply($meta_wrap->{'#'}{order}, ['id', 'val'], 'order が正しい');
+
+    Spool::remove($sid);
+    $db->close();
+};
+
+# --- spec#24. spool 経由の NULL → '' ---
+subtest 'spool 経由の NULL を空文字に変換' => sub {
+    my $db = DBOBJ->new('develop');
+    my $sid = 'dbobjtestnull' . $$;
+
+    $db->run("CREATE TEMP TABLE ${TBL}_sn (id INT, val TEXT)");
+    $db->run("INSERT INTO ${TBL}_sn VALUES (1, NULL)");
+    $db->run("SELECT val FROM ${TBL}_sn");
+    $db->spool($sid);
+
+    my $rows = do "/tmp/spool/$sid/rows.do";
+    is($rows->[0]{val}, '', 'spool 経由の NULL は "" になる');
 
     Spool::remove($sid);
     $db->close();
