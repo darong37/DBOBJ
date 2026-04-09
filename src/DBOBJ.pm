@@ -53,7 +53,7 @@ sub new {
     die "DBOBJ.new: dbname is required" unless defined $dbname && $dbname ne '';
 
     for my $var (qw(PGHOST PGPORT PGUSER PGPASSWORD)) {
-        die "$var is not set" unless defined $ENV{$var} && $ENV{$var} ne '';
+        die "DBOBJ.new: $var is not set" unless defined $ENV{$var} && $ENV{$var} ne '';
     }
 
     my $dsn = "dbi:Pg:dbname=$dbname;host=$ENV{PGHOST};port=$ENV{PGPORT}";
@@ -64,7 +64,8 @@ sub new {
         AutoInactiveDestroy => 1,
     }) or die "DBOBJ.new: " . DBI->errstr;
 
-    $dbh->do("SET client_min_messages = WARNING");
+    $dbh->do("SET client_min_messages = WARNING")
+        or die "DBOBJ.new: " . $dbh->errstr;
 
     return bless {
         dbn => $dbname,
