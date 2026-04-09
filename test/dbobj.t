@@ -136,4 +136,32 @@ subtest 'hashes 0件で空配列' => sub {
     $db->close();
 };
 
+# --- spec#11. NULL → '' への変換確認 ---
+subtest 'NULL を空文字に変換' => sub {
+    my $db = DBOBJ->new('develop');
+    $db->run("CREATE TEMP TABLE ${TBL}_null (id INT, val TEXT)");
+    $db->run("INSERT INTO ${TBL}_null VALUES (1, NULL)");
+
+    # get
+    $db->run("SELECT val FROM ${TBL}_null");
+    is($db->get(), '', 'get() で NULL → ""');
+
+    # list
+    $db->run("SELECT val FROM ${TBL}_null");
+    my @l = $db->list();
+    is($l[0], '', 'list() で NULL → ""');
+
+    # arrays
+    $db->run("SELECT val FROM ${TBL}_null");
+    my $a = $db->arrays();
+    is($a->[0][0], '', 'arrays() で NULL → ""');
+
+    # hashes
+    $db->run("SELECT val FROM ${TBL}_null");
+    my $h = $db->hashes();
+    is($h->[1]{val}, '', 'hashes() で NULL → ""');
+
+    $db->close();
+};
+
 done_testing;
