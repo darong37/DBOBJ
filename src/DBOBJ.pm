@@ -35,6 +35,7 @@ package DBOBJ;
 use strict;
 use warnings;
 use DBI;
+use Spool;
 
 # DBI 数値型コード（REAL/INTEGER/NUMERIC 系）
 my %NUM_TYPES = map { $_ => 1 } (
@@ -177,6 +178,28 @@ sub psql {
     );
     system(@cmd);
     die "DBOBJ.psql: exit code " . ($? >> 8) if $? != 0;
+    return $self;
+}
+
+sub spool {
+    my ($self, $spool_id) = @_;
+    my $sth = $self->{sth};
+    my $meta = _build_meta($sth, 0);
+
+    my $sp = Spool->open($spool_id);
+    $sp->meta($meta);
+
+    my $count = 0;
+    while (my $row = $sth->fetchrow_hashref()) {
+        for my $key (keys %$row) {
+            $row->{$key} = '' unless defined $row->{$key};
+        }
+        $sp->add($row);
+        $count++;
+    }
+
+    $meta->{'#'}{count} = $count;
+    $sp->close();
     return $self;
 }
 

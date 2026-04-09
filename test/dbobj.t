@@ -3,6 +3,7 @@ use warnings;
 use Test::More;
 use Test::Exception;
 use DBOBJ;
+use Spool;
 
 # テスト用テーブル名（他テストと衝突しないよう一意にする）
 my $TBL = 'dbobj_test_' . $$;
@@ -203,6 +204,49 @@ subtest 'psql SQL エラーで die' => sub {
 subtest 'psql NOTICE は die しない' => sub {
     my $db = DBOBJ->new('develop');
     lives_ok { $db->psql('test/notice.sql') } 'NOTICE があっても die しない';
+    $db->close();
+};
+
+# --- spec#18. spool() 書き出し・読み返し確認 ---
+subtest 'spool 書き出しと読み返し' => sub {
+    my $db = DBOBJ->new('develop');
+    my $sid = 'dbobjtest' . $$;
+
+    $db->run("CREATE TEMP TABLE ${TBL}_s (id INT, val TEXT)");
+    $db->run("INSERT INTO ${TBL}_s VALUES (1, 'x'), (2, 'y')");
+    $db->run("SELECT id, val FROM ${TBL}_s ORDER BY id");
+    lives_ok { $db->spool($sid) } 'spool() が die しない';
+
+    # rows.do を直接読み返す（確認前の状態）
+    my $rows = do "/tmp/spool/$sid/rows.do";
+    is(scalar(@$rows), 2, '2件読み返せる');
+    is($rows->[0]{val}, 'x', '1件目の val');
+
+    # meta.do を直接読み返す
+    my $meta_wrap = do "/tmp/spool/$sid/meta.do";
+    is($meta_wrap->{'#'}{count}, 2, 'count が正しい');
+    is($meta_wrap->{'#'}{attrs}{id}, 'num', 'id は num');
+
+    Spool::remove($sid);
+    $db->close();
+};
+
+# --- spec#19. spool 0件でも作成・attrs/order 保持・count=0 ---
+subtest 'spool 0件でも正しく作成' => sub {
+    my $db = DBOBJ->new('develop');
+    my $sid = 'dbobjtest0' . $$;
+
+    $db->run("CREATE TEMP TABLE ${TBL}_s0 (id INT, val TEXT)");
+    $db->run("SELECT id, val FROM ${TBL}_s0");
+    lives_ok { $db->spool($sid) } '0件でも die しない';
+
+    my $meta_wrap = do "/tmp/spool/$sid/meta.do";
+    is($meta_wrap->{'#'}{count}, 0, 'count は 0');
+    ok(exists $meta_wrap->{'#'}{attrs}{id},  'attrs に id が存在');
+    ok(exists $meta_wrap->{'#'}{attrs}{val}, 'attrs に val が存在');
+    is_deeply($meta_wrap->{'#'}{order}, ['id', 'val'], 'order が正しい');
+
+    Spool::remove($sid);
     $db->close();
 };
 
