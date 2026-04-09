@@ -38,4 +38,45 @@ subtest 'prepare + execute バインド変数' => sub {
     $db->close();
 };
 
+# --- spec#4. run + get（スカラー1値）---
+subtest 'get スカラー1値' => sub {
+    my $db = DBOBJ->new('develop');
+    $db->run("SELECT 42");
+    my $val = $db->get();
+    is($val, 42, 'get() で1値取得');
+    $db->close();
+};
+
+# --- spec#5. get で1行1列以外は die ---
+subtest 'get で1行1列以外は die' => sub {
+    my $db = DBOBJ->new('develop');
+    $db->run("SELECT 1, 2");
+    dies_ok { $db->get() } '複数列で die';
+
+    $db->run("CREATE TEMP TABLE ${TBL}_g (id INT)");
+    $db->run("INSERT INTO ${TBL}_g VALUES (1), (2)");
+    $db->run("SELECT id FROM ${TBL}_g");
+    dies_ok { $db->get() } '複数行で die';
+    $db->close();
+};
+
+# --- spec#6. run + list（単一カラム）---
+subtest 'list 単一カラム全件' => sub {
+    my $db = DBOBJ->new('develop');
+    $db->run("CREATE TEMP TABLE ${TBL}_l (id INT)");
+    $db->run("INSERT INTO ${TBL}_l VALUES (1), (2), (3)");
+    $db->run("SELECT id FROM ${TBL}_l ORDER BY id");
+    my @vals = $db->list();
+    is_deeply(\@vals, [1, 2, 3], 'list() で全件取得');
+    $db->close();
+};
+
+# --- spec#7. list で1列以外は die ---
+subtest 'list で1列以外は die' => sub {
+    my $db = DBOBJ->new('develop');
+    $db->run("SELECT 1, 2");
+    dies_ok { $db->list() } '複数列で die';
+    $db->close();
+};
+
 done_testing;
