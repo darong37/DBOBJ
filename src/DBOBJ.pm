@@ -119,6 +119,13 @@ sub list {
     return map { _normalize($_->[0]) } @$rows;
 }
 
+sub arrays {
+    my ($self) = @_;
+    my $rows = $self->{sth}->fetchall_arrayref();
+    return [] unless @$rows;
+    return [ map { [ map { _normalize($_) } @$_ ] } @$rows ];
+}
+
 sub close {
     my ($self) = @_;
     $self->{sth}->finish() if $self->{sth};

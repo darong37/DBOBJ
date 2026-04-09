@@ -84,4 +84,24 @@ subtest 'list で1列以外は die' => sub {
     $db->close();
 };
 
+# --- spec#8. run + arrays（AoA）---
+subtest 'arrays 全件AoA' => sub {
+    my $db = DBOBJ->new('develop');
+    $db->run("CREATE TEMP TABLE ${TBL}_a (id INT, val TEXT)");
+    $db->run("INSERT INTO ${TBL}_a VALUES (1, 'x'), (2, 'y')");
+    $db->run("SELECT id, val FROM ${TBL}_a ORDER BY id");
+    my $result = $db->arrays();
+    is_deeply($result, [[1, 'x'], [2, 'y']], 'arrays() で AoA 取得');
+    $db->close();
+};
+
+subtest 'arrays 0件で空配列' => sub {
+    my $db = DBOBJ->new('develop');
+    $db->run("CREATE TEMP TABLE ${TBL}_a0 (id INT)");
+    $db->run("SELECT id FROM ${TBL}_a0");
+    my $result = $db->arrays();
+    is_deeply($result, [], '0件なら []');
+    $db->close();
+};
+
 done_testing;
