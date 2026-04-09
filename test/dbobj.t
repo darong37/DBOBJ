@@ -164,4 +164,46 @@ subtest 'NULL を空文字に変換' => sub {
     $db->close();
 };
 
+# --- spec#13. DML（INSERT/UPDATE/DELETE）---
+subtest 'DML 実行' => sub {
+    my $db = DBOBJ->new('develop');
+    $db->run("CREATE TEMP TABLE ${TBL}_dml (id INT, val TEXT)");
+    $db->run("INSERT INTO ${TBL}_dml VALUES (1, 'a')");
+    $db->run("UPDATE ${TBL}_dml SET val = 'b' WHERE id = 1");
+    $db->run("SELECT val FROM ${TBL}_dml");
+    is($db->get(), 'b', 'UPDATE が反映されている');
+    $db->run("DELETE FROM ${TBL}_dml WHERE id = 1");
+    $db->run("SELECT COUNT(*) FROM ${TBL}_dml");
+    is($db->get(), 0, 'DELETE 後は0件');
+    $db->close();
+};
+
+# --- spec#14. psql($sqlfile) ファイル実行 ---
+subtest 'psql SQLファイル実行' => sub {
+    my $db = DBOBJ->new('develop');
+    lives_ok { $db->psql('test/insert.sql') } 'psql() が die しない';
+    $db->close();
+};
+
+# --- spec#15. psql でファイル不在の場合 die ---
+subtest 'psql ファイル不在で die' => sub {
+    my $db = DBOBJ->new('develop');
+    dies_ok { $db->psql('test/nonexistent.sql') } 'ファイル不在で die';
+    $db->close();
+};
+
+# --- spec#16. psql で終了コード非0の場合 die ---
+subtest 'psql SQL エラーで die' => sub {
+    my $db = DBOBJ->new('develop');
+    dies_ok { $db->psql('test/error.sql') } 'SQL エラーで die';
+    $db->close();
+};
+
+# --- spec#17. psql で NOTICE が出ても die しない ---
+subtest 'psql NOTICE は die しない' => sub {
+    my $db = DBOBJ->new('develop');
+    lives_ok { $db->psql('test/notice.sql') } 'NOTICE があっても die しない';
+    $db->close();
+};
+
 done_testing;

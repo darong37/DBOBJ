@@ -161,6 +161,25 @@ sub hashes {
     return [$meta, @$rows];
 }
 
+sub psql {
+    my ($self, $sqlfile) = @_;
+    die "DBOBJ.psql: file not found: $sqlfile" unless -f $sqlfile;
+
+    local $ENV{PGPASSWORD} = $ENV{PGPASSWORD};
+    my @cmd = (
+        'psql',
+        '--set', 'ON_ERROR_STOP=1',
+        '-h', $ENV{PGHOST},
+        '-p', $ENV{PGPORT},
+        '-U', $ENV{PGUSER},
+        '-d', $self->{dbn},
+        '-f', $sqlfile,
+    );
+    system(@cmd);
+    die "DBOBJ.psql: exit code " . ($? >> 8) if $? != 0;
+    return $self;
+}
+
 sub close {
     my ($self) = @_;
     $self->{sth}->finish() if $self->{sth};
