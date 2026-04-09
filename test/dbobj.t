@@ -25,4 +25,17 @@ subtest 'dbname 未指定で die' => sub {
     dies_ok { DBOBJ->new() } 'dbname 未指定で die';
 };
 
+# --- 12. prepare + execute バインド変数 ---
+subtest 'prepare + execute バインド変数' => sub {
+    my $db = DBOBJ->new('develop');
+    $db->run("CREATE TEMP TABLE $TBL (id INT, val TEXT)");
+    $db->run("INSERT INTO $TBL VALUES (1, 'a'), (2, 'b')");
+
+    $db->prepare("SELECT val FROM $TBL WHERE id = ?");
+    $db->execute(1);
+    my @rows = $db->list();
+    is_deeply(\@rows, ['a'], 'バインド変数で絞り込める');
+    $db->close();
+};
+
 done_testing;

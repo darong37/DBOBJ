@@ -74,6 +74,39 @@ sub new {
     }, $class;
 }
 
+sub prepare {
+    my ($self, $sql) = @_;
+    $self->{sth}->finish() if $self->{sth};
+    $self->{sth} = $self->{dbh}->prepare($sql)
+        or die "DBOBJ.prepare: " . $self->{dbh}->errstr;
+    return $self;
+}
+
+sub execute {
+    my ($self, @bind) = @_;
+    $self->{sth}->execute(@bind)
+        or die "DBOBJ.execute: " . $self->{sth}->errstr;
+    return $self;
+}
+
+sub run {
+    my ($self, $sql) = @_;
+    $self->prepare($sql)->execute();
+    return $self;
+}
+
+sub list {
+    my ($self) = @_;
+    my $sth = $self->{sth};
+    die "DBOBJ.list: no active statement" unless $sth;
+    my @rows;
+    while (my $row = $sth->fetch()) {
+        die "DBOBJ.list: result must be single column" if @$row != 1;
+        push @rows, defined($row->[0]) ? $row->[0] : '';
+    }
+    return @rows;
+}
+
 sub close {
     my ($self) = @_;
     $self->{sth}->finish() if $self->{sth};
