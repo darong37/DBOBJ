@@ -25,7 +25,7 @@ subtest 'dbname 未指定で die' => sub {
     dies_ok { DBOBJ->new() } 'dbname 未指定で die';
 };
 
-# --- 12. prepare + execute バインド変数 ---
+# --- spec#12. prepare + execute バインド変数 ---
 subtest 'prepare + execute バインド変数' => sub {
     my $db = DBOBJ->new('develop');
     $db->run("CREATE TEMP TABLE $TBL (id INT, val TEXT)");
