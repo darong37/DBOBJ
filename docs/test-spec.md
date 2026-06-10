@@ -1,5 +1,5 @@
 # DBOBJ Test Spec
-Date: 2026-06-10
+Date: 2026-06-11
 
 テストスイートの仕様を定義する。仕様本体は [spec.md](spec.md) を参照すること。
 
@@ -10,6 +10,8 @@ Date: 2026-06-10
   他テストとの衝突を避ける
 - 環境変数（`PGHOST`、`PGPORT`、`PGUSER`、`PGPASSWORD`）が設定済みであること。
   定義元は `.claude/settings.json` の `env` とする
+- spool_id にはプロセス ID を含めて他テストとの衝突を避け、テストで作成した spool は
+  `Spool::remove` で後始末する
 
 ## 実行方法
 
@@ -55,3 +57,18 @@ prove -lr test/
 | 21 | `psql` で終了コード非0の場合 `die` |
 | 22 | `psql` で NOTICE が出ても die しないこと |
 | 23 | `hashes` の返り値に対して呼び出し側で `group()` が機能すること（DBOBJ の出力が MetaAoh の前提条件を満たす統合確認） |
+| 24 | `run`（`ORDER BY` 付き SELECT）+ `spool($spool_id)` が `$spool_id` を返し、`Spool::records` で確定後に `Spool::get` で取得した行が DB の内容と一致すること |
+| 25 | `spool()` 後に内部状態の `ordercols` が `ORDER BY` の列名と一致すること。それを `Spool::records` のキー列として使えること |
+| 26 | schema 生成：spool の `meta.do` の `order` が num カラム `NAME#`・str カラム `NAME` の規則で生成されていること |
+| 27 | NULL を含む行が `''` へ置き換えられて spool され（`add()` で die しない）、取得値が `''` であること |
+| 28 | `ORDER BY` がない SQL で `spool()` が die すること |
+| 29 | 位置指定（`ORDER BY 1`）で die すること |
+| 30 | 式（例：`ORDER BY lower(name)`）で die すること |
+| 31 | SELECT 句に存在しない列の `ORDER BY` で die すること |
+| 32 | サブクエリ内にしか `ORDER BY` がない SQL で die すること |
+| 33 | 文字列リテラル内の `'order by'` をトップレベルと誤認しないこと |
+| 34 | 小文字 `order by`・修飾付き（`DESC`・`NULLS LAST`）・複数列・後続 `LIMIT` 付きでも正しく列名へ解決されること |
+| 35 | `prepare` + `execute`（bind 付き）経由の `spool()` が動作すること |
+| 36 | `prepare` を経ずに `spool()` を呼ぶと die すること |
+| 37 | 0件の結果でも `spool()` が `$spool_id` を返し、`Spool::records` で 0 件（`count == 0`）確定できること |
+| 38 | 既存の spool_id と重複した場合に die すること（Spool の die が伝播） |
