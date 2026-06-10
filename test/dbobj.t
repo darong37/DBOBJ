@@ -3,7 +3,7 @@ use warnings;
 use Test::More;
 use Test::Exception;
 use DBOBJ;
-use Spool;
+use MetaAoh;
 
 # テスト用テーブル名（他テストと衝突しないよう一意にする）
 my $TBL = 'dbobj_test_' . $$;
@@ -102,39 +102,51 @@ subtest 'arrays 0件で空配列' => sub {
     $db->close();
 };
 
-# --- spec#11. run + hashes（メタ付き AoH・attrs/order/count 確認）---
-subtest 'hashes メタ付きAoH' => sub {
+# --- spec#11. hashes が metaAoh を返す ---
+subtest 'hashes は metaAoh を返す' => sub {
     my $db = DBOBJ->new('develop');
     $db->run("CREATE TEMP TABLE ${TBL}_h (id INT, val TEXT)");
     $db->run("INSERT INTO ${TBL}_h VALUES (1, 'a'), (2, 'b')");
     $db->run("SELECT id, val FROM ${TBL}_h ORDER BY id");
-    my $result = $db->hashes();
+    my $m = $db->hashes();
 
-    is(ref($result), 'ARRAY', '配列リファレンス');
-    is(scalar(@$result), 3, 'meta + 2行 = 3要素');
-
-    my $meta = $result->[0]{'#'};
-    is_deeply($meta->{order}, ['id', 'val'], 'order が正しい');
-    is($meta->{attrs}{id},  'num', 'id は num');
-    is($meta->{attrs}{val}, 'str', 'val は str');
-    is($meta->{count}, 2, 'count は meta 自身を含まないデータ行数');
-
-    is_deeply($result->[1], {id => 1, val => 'a'}, '1行目のデータ');
-    is_deeply($result->[2], {id => 2, val => 'b'}, '2行目のデータ');
+    ok(MetaAoh::is_metaAOH($m), 'metaAoh である');
+    is($m->count(), 2, 'count() はデータ行数');
+    is_deeply($m->[0], {id => 1, val => 'a'}, '1行目に添字アクセスできる');
+    is_deeply($m->[1], {id => 2, val => 'b'}, '2行目に添字アクセスできる');
     $db->close();
 };
 
-# --- spec#12. hashes 0件なら [] ---
-subtest 'hashes 0件で空配列' => sub {
+# --- spec#12. hashes の meta 確認 ---
+subtest 'hashes の meta' => sub {
     my $db = DBOBJ->new('develop');
-    $db->run("CREATE TEMP TABLE ${TBL}_h0 (id INT)");
-    $db->run("SELECT id FROM ${TBL}_h0");
-    my $result = $db->hashes();
-    is_deeply($result, [], '0件なら []');
+    $db->run("CREATE TEMP TABLE ${TBL}_hm (id INT, val TEXT)");
+    $db->run("INSERT INTO ${TBL}_hm VALUES (1, 'a')");
+    $db->run("SELECT id, val FROM ${TBL}_hm");
+    my $meta = $db->hashes()->meta();
+
+    is_deeply($meta->{order}, ['id#', 'val'], 'order は num が NAME#・str が NAME');
+    is_deeply($meta->{cols},  ['id', 'val'],  'cols はカラム順');
+    is_deeply($meta->{attrs}, {id => 'num', val => 'str'}, 'attrs は型');
+    ok(!$meta->{grouped}, 'grouped は偽');
     $db->close();
 };
 
-# --- spec#13. NULL → '' への変換確認 ---
+# --- spec#13. hashes 0件なら空の metaAoh ---
+subtest 'hashes 0件で空の metaAoh' => sub {
+    my $db = DBOBJ->new('develop');
+    $db->run("CREATE TEMP TABLE ${TBL}_h0 (id INT, val TEXT)");
+    $db->run("SELECT id, val FROM ${TBL}_h0");
+    my $m = $db->hashes();
+
+    ok(MetaAoh::is_metaAOH($m), '0件でも metaAoh である');
+    is($m->count(), 0, 'count() は 0');
+    is_deeply($m->meta()->{cols},  ['id', 'val'], 'cols は保持される');
+    is_deeply($m->meta()->{attrs}, {id => 'num', val => 'str'}, 'attrs は保持される');
+    $db->close();
+};
+
+# --- spec#14. NULL → '' への変換確認 ---
 subtest 'NULL を空文字に変換' => sub {
     my $db = DBOBJ->new('develop');
     $db->run("CREATE TEMP TABLE ${TBL}_null (id INT, val TEXT)");
@@ -154,15 +166,15 @@ subtest 'NULL を空文字に変換' => sub {
     my $a = $db->arrays();
     is($a->[0][0], '', 'arrays() で NULL → ""');
 
-    # hashes
+    # hashes() returns metaAoh; row 0 is the first data row
     $db->run("SELECT val FROM ${TBL}_null");
-    my $h = $db->hashes();
-    is($h->[1]{val}, '', 'hashes() で NULL → ""');
+    my $m = $db->hashes();
+    is($m->[0]{val}, '', 'hashes() で NULL → ""');
 
     $db->close();
 };
 
-# --- spec#14. prepare + execute バインド変数 ---
+# --- spec#15. prepare + execute バインド変数 ---
 subtest 'prepare + execute バインド変数' => sub {
     my $db = DBOBJ->new('develop');
     $db->run("CREATE TEMP TABLE $TBL (id INT, val TEXT)");
@@ -175,7 +187,7 @@ subtest 'prepare + execute バインド変数' => sub {
     $db->close();
 };
 
-# --- spec#15. DML（INSERT/UPDATE/DELETE）---
+# --- spec#16. DML（INSERT/UPDATE/DELETE）---
 subtest 'DML 実行' => sub {
     my $db = DBOBJ->new('develop');
     $db->run("CREATE TEMP TABLE ${TBL}_dml (id INT, val TEXT)");
@@ -189,14 +201,14 @@ subtest 'DML 実行' => sub {
     $db->close();
 };
 
-# --- spec#16. run で SQL 構文エラー時 die ---
+# --- spec#17. run で SQL 構文エラー時 die ---
 subtest 'run SQL 構文エラーで die' => sub {
     my $db = DBOBJ->new('develop');
     dies_ok { $db->run("SELCT * FROOOM nowhere") } 'SQL 構文エラーで die';
     $db->close();
 };
 
-# --- spec#17. prepare + execute で SQL エラー時 die ---
+# --- spec#18. prepare + execute で SQL エラー時 die ---
 subtest 'prepare + execute SQL エラーで die' => sub {
     my $db = DBOBJ->new('develop');
     dies_ok {
@@ -206,91 +218,44 @@ subtest 'prepare + execute SQL エラーで die' => sub {
     $db->close();
 };
 
-# --- spec#18. psql($sqlfile) ファイル実行 ---
+# --- spec#19. psql($sqlfile) ファイル実行 ---
 subtest 'psql SQLファイル実行' => sub {
     my $db = DBOBJ->new('develop');
     lives_ok { $db->psql('test/insert.sql') } 'psql() が die しない';
     $db->close();
 };
 
-# --- spec#19. psql でファイル不在の場合 die ---
+# --- spec#20. psql でファイル不在の場合 die ---
 subtest 'psql ファイル不在で die' => sub {
     my $db = DBOBJ->new('develop');
     dies_ok { $db->psql('test/nonexistent.sql') } 'ファイル不在で die';
     $db->close();
 };
 
-# --- spec#20. psql で終了コード非0の場合 die ---
+# --- spec#21. psql で終了コード非0の場合 die ---
 subtest 'psql SQL エラーで die' => sub {
     my $db = DBOBJ->new('develop');
     dies_ok { $db->psql('test/error.sql') } 'SQL エラーで die';
     $db->close();
 };
 
-# --- spec#21. psql で NOTICE が出ても die しない ---
+# --- spec#22. psql で NOTICE が出ても die しない ---
 subtest 'psql NOTICE は die しない' => sub {
     my $db = DBOBJ->new('develop');
     lives_ok { $db->psql('test/notice.sql') } 'NOTICE があっても die しない';
     $db->close();
 };
 
-# --- spec#22. spool() 書き出し・読み返し確認 ---
-subtest 'spool 書き出しと読み返し' => sub {
+# --- spec#23. 呼び出し側で group() が機能する（統合確認）---
+subtest 'hashes の metaAoh に group() が使える' => sub {
     my $db = DBOBJ->new('develop');
-    my $sid = 'dbobjtest' . $$;
+    $db->run("CREATE TEMP TABLE ${TBL}_grp (dept TEXT, name TEXT)");
+    $db->run("INSERT INTO ${TBL}_grp VALUES ('a', 'x'), ('a', 'y'), ('b', 'z')");
+    $db->run("SELECT dept, name FROM ${TBL}_grp ORDER BY dept, name");
+    my $t = $db->hashes()->group(['dept']);
 
-    $db->run("CREATE TEMP TABLE ${TBL}_s (id INT, val TEXT)");
-    $db->run("INSERT INTO ${TBL}_s VALUES (1, 'x'), (2, 'y')");
-    $db->run("SELECT id, val FROM ${TBL}_s ORDER BY id");
-    lives_ok { $db->spool($sid) } 'spool() が die しない';
-
-    # rows.do を直接読み返す
-    my $rows = do "/tmp/spool/$sid/rows.do";
-    is(scalar(@$rows), 2, '2件読み返せる');
-    is($rows->[0]{val}, 'x', '1件目の val');
-
-    # meta.do を直接読み返す
-    my $meta_wrap = do "/tmp/spool/$sid/meta.do";
-    is($meta_wrap->{'#'}{count}, 2, 'count が正しい');
-    is($meta_wrap->{'#'}{attrs}{id}, 'num', 'id は num');
-
-    Spool::remove($sid);
-    $db->close();
-};
-
-# --- spec#23. spool 0件でも作成・attrs/order 保持・count=0 ---
-subtest 'spool 0件でも正しく作成' => sub {
-    my $db = DBOBJ->new('develop');
-    my $sid = 'dbobjtest0' . $$;
-
-    $db->run("CREATE TEMP TABLE ${TBL}_s0 (id INT, val TEXT)");
-    $db->run("SELECT id, val FROM ${TBL}_s0");
-    lives_ok { $db->spool($sid) } '0件でも die しない';
-
-    my $meta_wrap = do "/tmp/spool/$sid/meta.do";
-    is($meta_wrap->{'#'}{count}, 0, 'count は 0');
-    ok(exists $meta_wrap->{'#'}{attrs}{id},  'attrs に id が存在');
-    ok(exists $meta_wrap->{'#'}{attrs}{val}, 'attrs に val が存在');
-    is_deeply($meta_wrap->{'#'}{order}, ['id', 'val'], 'order が正しい');
-
-    Spool::remove($sid);
-    $db->close();
-};
-
-# --- spec#24. spool 経由の NULL → '' ---
-subtest 'spool 経由の NULL を空文字に変換' => sub {
-    my $db = DBOBJ->new('develop');
-    my $sid = 'dbobjtestnull' . $$;
-
-    $db->run("CREATE TEMP TABLE ${TBL}_sn (id INT, val TEXT)");
-    $db->run("INSERT INTO ${TBL}_sn VALUES (1, NULL)");
-    $db->run("SELECT val FROM ${TBL}_sn");
-    $db->spool($sid);
-
-    my $rows = do "/tmp/spool/$sid/rows.do";
-    is($rows->[0]{val}, '', 'spool 経由の NULL は "" になる');
-
-    Spool::remove($sid);
+    ok($t->meta()->{grouped}, 'grouped が真');
+    is($t->count(), 2, '最上位 tree node 数は dept の値の種類数');
     $db->close();
 };
 

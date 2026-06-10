@@ -9,6 +9,8 @@ A lightweight PostgreSQL data access object for Perl. Wraps DBI with a simple, c
 - Perl 5
 - DBI, DBD::Pg
 - PostgreSQL environment variables: `PGHOST`, `PGPORT`, `PGUSER`, `PGPASSWORD`
+- `lib/MetaAoh.pm` and `lib/CommonIO.pm` (bundled in `lib/`)
+- Log directory `output/logs` must exist at runtime (used by CommonIO)
 
 ## Installation
 
@@ -25,8 +27,7 @@ Copy `src/DBOBJ.pm` to your project's `lib/` directory.
 | `get()` | Fetch exactly 1 row, 1 column as a scalar |
 | `list()` | Fetch all rows of a single column as a flat array |
 | `arrays()` | Fetch all rows as AoA (Array of Arrays) |
-| `hashes()` | Fetch all rows as AoH with meta header |
-| `spool($spool_id)` | Write result to Spool without loading into memory |
+| `hashes()` | Fetch all rows as a metaAoh (MetaAoh object) |
 | `psql($sqlfile)` | Execute a SQL file via psql subprocess |
 | `close()` | Close the database connection |
 
@@ -49,20 +50,18 @@ my @names = $db->list();
 $db->run("SELECT id, name FROM users");
 my $rows = $db->arrays();  # [[1, 'Alice'], [2, 'Bob']]
 
-# Array of hashes with meta
+# MetaAoh (MetaAoh object)
 $db->run("SELECT id, name FROM users");
-my $result = $db->hashes();
-# [{'#' => {attrs=>{id=>'num',name=>'str'}, order=>['id','name'], count=>2}},
-#  {id=>1, name=>'Alice'}, {id=>2, name=>'Bob'}]
+my $m = $db->hashes();
+$m->count();              # 2
+$m->meta();               # {order=>['id#','name'], cols=>['id','name'], attrs=>{id=>'num',name=>'str'}, grouped=>0}
+$m->[0]{name};            # 'Alice'
+my $t = $m->group(['id']);  # grouping is done by the caller
 
 # Bind variables
 $db->prepare("SELECT name FROM users WHERE id = ?");
 $db->execute(42);
 my $name = $db->get();
-
-# Spool (memory-efficient)
-$db->run("SELECT id, name FROM large_table");
-$db->spool('my_spool_id');  # writes to /tmp/spool/my_spool_id/
 
 # Execute SQL file
 $db->psql('path/to/schema.sql');
@@ -75,13 +74,14 @@ $db->close();
 - `NULL` values are always returned as `''` (empty string)
 - `get()` dies unless result is exactly 1 row and 1 column
 - `list()` dies unless result has exactly 1 column
-- `arrays()` and `hashes()` return `[]` for empty results
-- `psql()` uses `--set ON_ERROR_STOP=1`; NOTICE messages do not cause errors
+- `arrays()` returns `[]` for empty results
+- `hashes()` returns an empty metaAoh for empty results (NOT `[]`); column info is preserved
+- Errors are raised via CommonIO `dying()`, which writes an error log before throwing
 
 ## Testing
 
 ```bash
-prove test/dbobj.t
+prove -lr test/
 ```
 
 Requires a live PostgreSQL connection via environment variables.

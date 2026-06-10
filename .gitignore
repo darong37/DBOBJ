@@ -34,3 +34,6 @@ lib/
 .claude/commands/
 .claude/settings.json
 AGENTS.md
+.codex/
+docs/rules/
+output/
