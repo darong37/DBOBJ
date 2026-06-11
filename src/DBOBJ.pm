@@ -8,12 +8,15 @@ package DBOBJ;
 # AoA     : 配列リファレンスの配列リファレンス
 # metaAoh : MetaAoh オブジェクト。meta（order, cols, attrs, grouped）を持ち、件数は count() メソッドで得る。仕様は lib/MetaAoh.spec.md に従う
 # dbname  : 接続先 PostgreSQL データベース名
+# dbo     : 接続済みの DBOBJ オブジェクト（new(dbname) の戻り値）
 # spool_id : Spool の spool_id（[A-Za-z0-9]+）。仕様は lib/Spool.spec.md に従う
-# ordercols : SQL のトップレベル ORDER BY から解析したソート列名のリスト。直近の spool() の結果を内部状態に保持する
+# confirm : spool() の確定モード指定。空 = lines、文字列（カラム名）の並び = records、配列リファレンスの並び = grouping
+# Psql    : psql プロセス連動の独立パッケージ DBOBJ::Psql（src/DBOBJ.pm 内に置く）。run と in を持ち、内部関数を持たない。Rules では DBOBJ::Psql を Psql と略記する
 #
 # Rules:
 # CommonIO はすべての基盤となるライブラリであり、積極的に使用する。仕様は lib/CommonIO.spec.md に従う
 # new() に dbname（接続先 PostgreSQL データベース名）は必須。PGHOST, PGPORT, PGUSER, PGPASSWORD は必須。PGDATABASE 環境変数は参照しない
+# 接続情報の取り込みは new() の1箇所だけで行う。PGHOST, PGPORT, PGUSER は内部状態（host, port, user）へ取り込み、DBI 接続も psql 起動もこの値を使う
 # DBI の自動例外は無効にし、エラーは手動検知して CommonIO の dying() でエラーログを残して die する
 # DB から取得した値に undef が含まれていた場合は、get(), list(), arrays(), hashes() の返却時に '' へ置き換える
 # prepare() -> execute() の呼び出し順序、取得系 API の結果セット消費、呼び出し順序に関する挙動は DBI の仕様に従う。DBOBJ は独自に制御しない
@@ -25,15 +28,24 @@ package DBOBJ;
 # arrays() は 0件なら [] を返す
 # hashes() は metaAoh を返す。0件でも空の metaAoh を返す（カラム情報は保持し count() == 0）
 # グループ化は呼び出し側が metaAoh の group() で行う。DBOBJ は関与しない
-# prepare(sql) は sql を内部状態に保持する（spool() の ORDER BY 解析に使う）
-# spool(spool_id) は実行済みステートメントハンドルから fetch ループで 1 行ずつ Spool->open / add / close へ流し、spool_id を返す。結果セットを metaAoh としてメモリに作らない
+# spool(spool_id, @confirm) は実行済みステートメントハンドルから fetch ループで 1 行ずつ Spool->open / add / close へ流し、続けて Spool の確定まで行って spool_id を返す。結果セットを metaAoh としてメモリに作らない
 # spool() の schema は hashes() と同じ規則（'str' は NAME、'num' は NAME#）で DBI の列情報から自動生成して Spool->open に渡す
 # spool() は fetch した値の undef を '' へ置き換えてから Spool の add() に渡す
-# spool() は prepare() で保持した SQL のトップレベル ORDER BY を解析してソート列を得る。ORDER BY がない SQL は die する
-# ORDER BY の解析は大文字小文字や書式の規約に依存しない。位置指定（ORDER BY 1）や式など列名として解決できない指定、SELECT 句の列に存在しない列は die する。文字列リテラル・コメント・括弧内（サブクエリ等）の ORDER BY はトップレベルとして扱わない
-# DBOBJ は渡された SQL を書き換えない。ORDER BY の自動付与はしない
-# 解析で得たソート列は ordercols として内部状態に保持し、Spool の records 確定のキー列として利用・検証できる形にする。解析をすり抜けた順序違反は Spool 側の再出現 die が二段目の安全網として捕まえる
-# psql(sqlfile) は dbname と PGHOST, PGPORT, PGUSER, PGPASSWORD を使って psql を別プロセスで起動する。sqlfile が存在しない場合は die する。SQL エラー時に非 0 終了する設定で起動し、NOTICE では終了しない。終了コードが 0 以外の場合は die する
+# spool() の確定モードは @confirm の形で判別する。空なら lines、文字列（カラム名）の並びなら records、配列リファレンスの並びなら grouping。判別は先頭要素の形のみで行う
+# spool() は引数・順序・列名の正しさを事前にチェックしない。schema 外の列名・ソート漏れ（キー再出現）・形の混在などの誤りは、実行時に Spool / MetaAoh の die が検知する
+# 並び順の指定はグループ指定と別には設けない。records のキー列の並び・grouping の配列リファレンスに出てきた列の並び（level1…level2…の連結順）を、そのままデータに要求される並び順の前提とする。連続性が保たれていれば昇順・降順は問わない
+# DBOBJ は渡された SQL を書き換えない
+# psql プロセスの起動は Psql::run(dbo, @args) に集約する。接続情報は dbo が new() で取り込んだ値（dbname, host, port, user）を使い、SQL エラー時に非 0 終了する設定（ON_ERROR_STOP=1）で起動し、NOTICE では終了しない。終了コードが 0 以外の場合は die する
+# Psql の単独利用は想定しない。psql 連動は DBOBJ->new で作った接続オブジェクト経由の1本だけとする
+# Psql は %ENV を直接読まない。例外は PGPASSWORD のみで、オブジェクトには保持せず環境変数のまま psql 子プロセスへ引き継ぐ
+# 事前検証はしない。sqlfile の不在や SQL の誤りは psql 自身が非 0 終了で検知し、終了コード経由で die する
+# DBOBJ の psql(sqlfile) は Psql::run('-f') を、in(dir, tbl) は Psql::in を、$self をそのまま渡して呼び、$self を返す
+# Psql::in(dbo, dir, tbl) は dir 配下のテーブル一式（DDL・TSV・keys）を psql 経由で DB へ投入する
+# Psql::in の tbl が schema.name 形式（/^(\w+)\.(\w+)$/）なら schema と name に分離する。形式でなければ schema は public、name は tbl のまま。ディレクトリ名・ファイル名には name 部分のみを使う
+# Psql::in の DDL は dir/name/name.sql を優先し、なければ dir/name/name.ddl を使う。どちらも存在しなければ die する。決定した DDL ファイルを -f で実行する
+# Psql::in のデータ投入は dir/name/name.tsv が存在すればそれを \copy schema.name from ... で投入する（単一 TSV）。なければ dir/name/name.0000.tsv から連番（%04d）で存在するファイルを順に \copy で投入し、番号が途切れたところで終了する（分割 TSV）。どちらも存在しなければ投入をスキップする。\copy は -c で実行する
+# Psql::in は dir/name/name.keys が存在すれば -f で実行する。存在しなければスキップする
+# Psql::in は各 psql 実行の前に、実行内容を CommonIO の log('info', ...) で表示する
 # close() は DB 接続を閉じる
 
 use strict;
@@ -64,8 +76,12 @@ sub new {
         dying("DBOBJ.new: $var is not set") unless defined $ENV{$var} && $ENV{$var} ne '';
     }
 
-    my $dsn = "dbi:Pg:dbname=$dbname;host=$ENV{PGHOST};port=$ENV{PGPORT}";
-    my $dbh = DBI->connect($dsn, $ENV{PGUSER}, $ENV{PGPASSWORD}, {
+    # Capture the connection identity once; DBI and psql both use these
+    # values, so later changes to %ENV cannot split the two apart.
+    my ($host, $port, $user) = @ENV{qw(PGHOST PGPORT PGUSER)};
+
+    my $dsn = "dbi:Pg:dbname=$dbname;host=$host;port=$port";
+    my $dbh = DBI->connect($dsn, $user, $ENV{PGPASSWORD}, {
         RaiseError          => 0,
         PrintError          => 0,
         pg_enable_utf8      => 1,
@@ -76,11 +92,12 @@ sub new {
         or dying("DBOBJ.new: " . $dbh->errstr);
 
     return bless {
-        dbname   => $dbname,
-        dbh      => $dbh,
-        sth      => undef,
-        sql      => undef,
-        ordercols => [],
+        dbname => $dbname,
+        host   => $host,
+        port   => $port,
+        user   => $user,
+        dbh    => $dbh,
+        sth    => undef,
     }, $class;
 }
 
@@ -89,8 +106,6 @@ sub prepare {
     $self->{sth}->finish() if $self->{sth};
     $self->{sth} = $self->{dbh}->prepare($sql)
         or dying("DBOBJ.prepare: " . $self->{dbh}->errstr);
-    # Keep the SQL text so spool() can parse its top-level ORDER BY.
-    $self->{sql} = $sql;
     return $self;
 }
 
@@ -107,12 +122,6 @@ sub run {
     return $self;
 }
 
-# DB 取得値の undef を返却用に空文字へ正規化する。
-sub _normalize {
-    my ($val) = @_;
-    return defined $val ? $val : '';
-}
-
 sub get {
     my ($self) = @_;
     my $rows = $self->{sth}->fetchall_arrayref();
@@ -120,7 +129,7 @@ sub get {
         scalar(@$rows),
         $rows->[0] ? scalar(@{$rows->[0]}) : 0))
         unless @$rows == 1 && @{$rows->[0]} == 1;
-    return _normalize($rows->[0][0]);
+    return $rows->[0][0] // '';
 }
 
 sub list {
@@ -129,29 +138,27 @@ sub list {
     dying("DBOBJ.list: no active statement") unless defined $ncols;
     dying("DBOBJ.list: expected 1 col, got $ncols") unless $ncols == 1;
     my $rows = $self->{sth}->fetchall_arrayref();
-    return map { _normalize($_->[0]) } @$rows;
+    return map { $_->[0] // '' } @$rows;
 }
 
 sub arrays {
     my ($self) = @_;
     my $rows = $self->{sth}->fetchall_arrayref();
     return [] unless @$rows;
-    return [ map { [ map { _normalize($_) } @$_ ] } @$rows ];
+    return [ map { [ map { $_ // '' } @$_ ] } @$rows ];
 }
 
-# Build MetaAoh column specs (NAME for str, NAME# for num) from the statement handle.
-# $api is the caller's API name, used only for the error message.
-sub _order_spec {
-    my ($sth, $api) = @_;
-    my $names = $sth->{NAME};
-    my $types = $sth->{TYPE};
-    dying("DBOBJ.$api: no column info (not a SELECT?)") unless defined $names && defined $types;
-    my @spec;
+# Convert statement-handle column info into MetaAoh order notation
+# (NAME for str, NAME# for num): the single rule shared by hashes() and spool().
+sub sth2order {
+    my ($sth) = @_;
+    my ($names, $types) = ($sth->{NAME}, $sth->{TYPE});
+    my @order;
     for my $i (0 .. $#$names) {
         my $type = $TYPE_CLASS{$types->[$i]} // 'str';
-        push @spec, $type eq 'num' ? "$names->[$i]#" : $names->[$i];
+        push @order, $type eq 'num' ? "$names->[$i]#" : $names->[$i];
     }
-    return @spec;
+    return @order;
 }
 
 sub hashes {
@@ -159,97 +166,39 @@ sub hashes {
     my $rows = $self->{sth}->fetchall_arrayref({});
     # Replace undef with '' to satisfy MetaAoh's no-undef contract.
     for my $row (@$rows) {
-        for my $key (keys %$row) {
-            $row->{$key} = '' unless defined $row->{$key};
-        }
+        $row->{$_} //= '' for keys %$row;
     }
-    return MetaAoh->new($rows, _order_spec($self->{sth}, 'hashes'));
-}
-
-# Blank out string literals, quoted identifiers and comments so that the
-# ORDER BY scan never matches inside them. Lengths are preserved.
-sub _masksql {
-    my ($sql) = @_;
-    $sql =~ s{('(?:[^']|'')*')|("(?:[^"]|"")*")|(--[^\n]*)|(/\*.*?\*/)}{' ' x length($&)}gse;
-    return $sql;
-}
-
-# Parse the top-level ORDER BY of the SQL and return its sort column names.
-# Anything that cannot be resolved to a plain column name dies: sorted input
-# is a precondition for Spool, so unverifiable ordering is an error.
-sub _ordercols {
-    my ($sql) = @_;
-    my $masked = _masksql($sql);
-
-    # Locate the last ORDER BY at parenthesis depth 0 (subqueries are deeper).
-    my $depth = 0;
-    my $start = -1;
-    while ($masked =~ /(\(|\)|\bORDER\s+BY\b)/gi) {
-        my $tok = $1;
-        if    ($tok eq '(') { $depth++ }
-        elsif ($tok eq ')') { $depth-- }
-        elsif ($depth == 0) { $start = pos($masked) }
-    }
-    dying("DBOBJ.spool: top-level ORDER BY not found") if $start < 0;
-
-    # The clause ends at a trailing top-level keyword or at end of SQL.
-    # Parenthesized sort specs are expressions and die below anyway.
-    my $clause = substr($masked, $start);
-    $clause =~ s/\b(?:LIMIT|OFFSET|FETCH|FOR)\b.*\z//is;
-
-    my @cols;
-    for my $item (split /,/, $clause) {
-        $item =~ s/\A\s+|\s+\z//g;
-        # A bare identifier with optional ASC/DESC and NULLS FIRST/LAST resolves
-        # to a column name. Positions, expressions, qualified or quoted names die.
-        dying("DBOBJ.spool: cannot resolve sort column: $item")
-            unless $item =~ /\A([A-Za-z_][A-Za-z0-9_]*)(?:\s+(?:ASC|DESC))?(?:\s+NULLS\s+(?:FIRST|LAST))?\z/i;
-        # PostgreSQL folds unquoted identifiers to lowercase, as does sth NAME.
-        push @cols, lc $1;
-    }
-    return @cols;
+    return MetaAoh->new($rows, sth2order($self->{sth}));
 }
 
 sub spool {
-    my ($self, $spool_id) = @_;
-    dying("DBOBJ.spool: no prepared SQL") unless defined $self->{sql};
-
-    my @ordercols = _ordercols($self->{sql});
-    my @spec = _order_spec($self->{sth}, 'spool');
-    my %cols = map { $_ => 1 } @{$self->{sth}{NAME}};
-    for my $col (@ordercols) {
-        dying("DBOBJ.spool: sort column not in result: $col") unless $cols{$col};
-    }
-    $self->{ordercols} = \@ordercols;
-
-    my $writer = Spool->open($spool_id, @spec);
+    my ($self, $spool_id, @confirm) = @_;
+    my $writer = Spool->open($spool_id, sth2order($self->{sth}));
     while (my $row = $self->{sth}->fetchrow_hashref()) {
-        for my $key (keys %$row) {
-            $row->{$key} = '' unless defined $row->{$key};
-        }
+        $row->{$_} //= '' for keys %$row;
         $writer->add($row);
     }
     dying("DBOBJ.spool: " . $self->{sth}->errstr) if $self->{sth}->err;
     $writer->close();
+
+    # Dispatch the confirm mode on the argument shape, mirroring Spool's
+    # confirm API. Correctness (column names, sort order) is not checked
+    # here; Spool detects violations at runtime.
+    if    (!@confirm)                  { Spool::lines($spool_id) }
+    elsif (ref $confirm[0] eq 'ARRAY') { Spool::grouping($spool_id, @confirm) }
+    else                               { Spool::records($spool_id, @confirm) }
     return $spool_id;
 }
 
 sub psql {
     my ($self, $sqlfile) = @_;
-    dying("DBOBJ.psql: file not found: $sqlfile") unless -f $sqlfile;
+    DBOBJ::Psql::run($self, '-f', $sqlfile);
+    return $self;
+}
 
-    local $ENV{PGPASSWORD} = $ENV{PGPASSWORD};
-    my @cmd = (
-        'psql',
-        '--set', 'ON_ERROR_STOP=1',
-        '-h', $ENV{PGHOST},
-        '-p', $ENV{PGPORT},
-        '-U', $ENV{PGUSER},
-        '-d', $self->{dbname},
-        '-f', $sqlfile,
-    );
-    system(@cmd);
-    dying("DBOBJ.psql: exit code " . ($? >> 8)) if $? != 0;
+sub in {
+    my ($self, $dir, $tbl) = @_;
+    DBOBJ::Psql::in($self, $dir, $tbl);
     return $self;
 }
 
@@ -258,6 +207,79 @@ sub close {
     $self->{sth}->finish() if $self->{sth};
     $self->{dbh}->disconnect() if $self->{dbh};
     return $self;
+}
+
+package DBOBJ::Psql;
+
+use CommonIO qw(dying);
+
+# DBOBJ::Psql は PostgreSQL データベースと psql プロセスを連動させる。
+# bind の配布単位を 1 ファイルに保つため DBOBJ とファイルを共有するが、
+# 独立したパッケージであり、依存は CommonIO のみで DBI には触れない。
+# 単独利用は想定しない。DBOBJ->new で作った接続オブジェクトを経由する
+# 1 本だけが psql 連動の道筋である。
+#   - run() は psql 起動の唯一の入口。接続情報は DBOBJ オブジェクト
+#     （new() で取り込んだ dbname / host / port / user）を使い、
+#     DBI と psql の接続先は常に一致する。%ENV はここでは読まない。
+#     例外は PGPASSWORD のみで、環境変数のまま子プロセスへ引き継ぐ。
+#     ON_ERROR_STOP=1 により SQL エラーで非 0 終了し（NOTICE は素通り）、
+#     終了コードが 0 以外なら dying() で die する
+#   - 事前検証はしない。ファイル不在や SQL の誤りは psql 自身が
+#     終了コードで検知する
+#   - in() は Table プロジェクトが生成するテーブル一式（$dir/<name>/ の
+#     DDL・TSV・keys ファイル）を DDL → \copy → keys の順に投入し、
+#     各実行の前に内容を CommonIO::log で表示する
+
+sub run {
+    my ($dbo, @args) = @_;
+    system(
+        'psql',
+        '--set', 'ON_ERROR_STOP=1',
+        '-h', $dbo->{host},
+        '-p', $dbo->{port},
+        '-U', $dbo->{user},
+        '-d', $dbo->{dbname},
+        @args,
+    );
+    dying("DBOBJ.Psql.run: exit code " . ($? >> 8)) if $? != 0;
+    return;
+}
+
+sub in {
+    my ($dbo, $dir, $tbl) = @_;
+    # Split "schema.name"; an unqualified table goes to public.
+    # Directory and file names use the name part only.
+    my ($schema, $name) = $tbl =~ /^(\w+)\.(\w+)$/ ? ($1, $2) : ('public', $tbl);
+    my $base = "$dir/$name/$name";
+
+    my $ddl = "$base.sql";
+    $ddl = "$base.ddl" unless -f $ddl;
+    dying("DBOBJ.Psql.in: DDL not exist: $base.sql or $base.ddl") unless -f $ddl;
+    CommonIO::log('info', "sql> \\i $ddl");
+    run($dbo, '-f', $ddl);
+
+    # A single TSV wins; otherwise follow the %04d sequence until it breaks.
+    my @tsv;
+    if (-f "$base.tsv") {
+        @tsv = ("$base.tsv");
+    }
+    else {
+        for (my $i = 0; ; $i++) {
+            my $file = sprintf("%s.%04d.tsv", $base, $i);
+            last unless -f $file;
+            push @tsv, $file;
+        }
+    }
+    for my $file (@tsv) {
+        CommonIO::log('info', "sql> copy $schema.$name from $file");
+        run($dbo, '-c', "\\copy $schema.$name from '$file'");
+    }
+
+    if (-f "$base.keys") {
+        CommonIO::log('info', "sql> \\i $base.keys");
+        run($dbo, '-f', "$base.keys");
+    }
+    return;
 }
 
 1;

@@ -2,16 +2,33 @@ use strict;
 use warnings;
 use Test::More;
 use Test::Exception;
+use File::Temp qw(tempdir);
+use File::Path qw(make_path);
+use Encode qw(decode);
 use DBOBJ;
 use MetaAoh;
 use Spool;
-use CommonIO qw(read_do);
+use CommonIO qw(read_do out_file);
 
 # テスト用テーブル名（他テストと衝突しないよう一意にする）
 my $TBL = 'dbobj_test_' . $$;
 
 # テスト用 spool_id の接頭辞（[A-Za-z0-9]+ のみ有効）
 my $SPID = 'dbobjtest' . $$;
+
+# in() テスト用のテーブル一式の親ディレクトリ（テスト終了時に自動削除）
+my $DIR = tempdir(CLEANUP => 1);
+
+# in() テスト用の標準 DDL のフォーマット（drop & re-create。Table の生成物と同じ構成）
+my $DDL = "DROP TABLE IF EXISTS public.%s;\nCREATE TABLE public.%s (id INT, val TEXT);\n";
+
+# in() テスト用のテーブル一式（DDL・TSV・keys）を $dir/$name/ 配下に作る。
+# %file は拡張子 => 内容（例: ddl => "CREATE ...", tsv => "1\ta"）
+sub mkset {
+    my ($dir, $name, %file) = @_;
+    make_path("$dir/$name");
+    out_file('>', "$dir/$name/$name.$_", $file{$_}) for keys %file;
+}
 
 # --- spec#1. 接続成功・close() ---
 subtest '接続成功・close()' => sub {
@@ -264,18 +281,16 @@ subtest 'hashes の metaAoh に group() が使える' => sub {
     $db->close();
 };
 
-# --- spec#24. spool 正常系（退避 → records 確定 → 取得）---
-subtest 'spool 正常系' => sub {
+# --- spec#24. spool records 確定（退避 → 確定 → 取得）---
+subtest 'spool records 確定' => sub {
     my $db = DBOBJ->new('develop');
     my $sid = "${SPID}A";
     $db->run("CREATE TEMP TABLE ${TBL}_sp (dept TEXT, id INT)");
     $db->run("INSERT INTO ${TBL}_sp VALUES ('a', 1), ('a', 2), ('b', 3)");
     $db->run("SELECT dept, id FROM ${TBL}_sp ORDER BY dept, id");
-    my $ret = $db->spool($sid);
-    is($ret, $sid, 'spool() が spool_id を返す');
+    is($db->spool($sid, 'dept'), $sid, 'spool() が spool_id を返す');
 
-    my $count = Spool::records($sid, 'dept');
-    is($count, 2, 'records 確定で dept のグループ数');
+    is(Spool::count($sid), 2, 'records で確定済み（dept のグループ数）');
     is_deeply(Spool::get($sid, 0),
         [{dept => 'a', id => 1}, {dept => 'a', id => 2}],
         '1件目のグループが DB の内容と一致');
@@ -286,30 +301,46 @@ subtest 'spool 正常系' => sub {
     $db->close();
 };
 
-# --- spec#25. ordercols の保持と records キー列への利用 ---
-subtest 'spool の ordercols' => sub {
+# --- spec#25. spool lines 確定（引数なし・ORDER BY 不要）---
+subtest 'spool lines 確定' => sub {
     my $db = DBOBJ->new('develop');
     my $sid = "${SPID}B";
-    $db->run("CREATE TEMP TABLE ${TBL}_sc (dept TEXT, id INT)");
-    $db->run("INSERT INTO ${TBL}_sc VALUES ('a', 1), ('b', 2)");
-    $db->run("SELECT dept, id FROM ${TBL}_sc ORDER BY dept, id");
-    $db->spool($sid);
+    $db->run("CREATE TEMP TABLE ${TBL}_ln (id INT, val TEXT)");
+    $db->run("INSERT INTO ${TBL}_ln VALUES (1, 'a'), (2, 'b'), (3, 'c')");
+    $db->run("SELECT id, val FROM ${TBL}_ln");
+    is($db->spool($sid), $sid, 'ORDER BY のない SQL でも spool_id を返す');
 
-    is_deeply($db->{ordercols}, ['dept', 'id'], 'ordercols が ORDER BY の列名と一致');
-    my $count = Spool::records($sid, @{$db->{ordercols}});
-    is($count, 2, 'ordercols を records のキー列として使える');
+    is(Spool::count($sid), 3, 'lines で行単位に確定');
+    is(ref Spool::get($sid, 0), 'HASH', 'item は行ハッシュ');
     Spool::remove($sid);
     $db->close();
 };
 
-# --- spec#26. schema 生成（meta.do の order が NAME#/NAME 規則）---
-subtest 'spool の schema 生成' => sub {
+# --- spec#26. spool grouping 確定（配列リファレンス指定）---
+subtest 'spool grouping 確定' => sub {
     my $db = DBOBJ->new('develop');
     my $sid = "${SPID}C";
+    $db->run("CREATE TEMP TABLE ${TBL}_gp (dept TEXT, id INT)");
+    $db->run("INSERT INTO ${TBL}_gp VALUES ('a', 1), ('a', 2), ('b', 3)");
+    $db->run("SELECT dept, id FROM ${TBL}_gp ORDER BY dept, id");
+    $db->spool($sid, ['dept']);
+
+    is(Spool::count($sid), 2, 'grouping で dept ごとに確定');
+    is_deeply(Spool::get($sid, 0),
+        {dept => 'a', '*' => [{id => 1}, {id => 2}]},
+        '階層 item（キー列 + "*" 配下）になっている');
+    Spool::remove($sid);
+    $db->close();
+};
+
+# --- spec#27. schema 生成（meta.do の order が NAME#/NAME 規則）---
+subtest 'spool の schema 生成' => sub {
+    my $db = DBOBJ->new('develop');
+    my $sid = "${SPID}D";
     $db->run("CREATE TEMP TABLE ${TBL}_sm (id INT, val TEXT)");
     $db->run("INSERT INTO ${TBL}_sm VALUES (1, 'a')");
     $db->run("SELECT id, val FROM ${TBL}_sm ORDER BY id");
-    $db->spool($sid);
+    $db->spool($sid, 'id');
 
     my $meta = read_do("/tmp/spool/$sid/meta.do");
     is_deeply($meta->{order}, ['id#', 'val'], 'order は num が NAME#・str が NAME');
@@ -317,138 +348,303 @@ subtest 'spool の schema 生成' => sub {
     $db->close();
 };
 
-# --- spec#27. NULL → '' で spool される ---
+# --- spec#28. NULL → '' で spool される ---
 subtest 'spool で NULL を空文字に変換' => sub {
     my $db = DBOBJ->new('develop');
-    my $sid = "${SPID}D";
+    my $sid = "${SPID}E";
     $db->run("CREATE TEMP TABLE ${TBL}_sn (id INT, val TEXT)");
     $db->run("INSERT INTO ${TBL}_sn VALUES (1, NULL)");
     $db->run("SELECT id, val FROM ${TBL}_sn ORDER BY id");
     lives_ok { $db->spool($sid) } 'NULL を含む行でも add() で die しない';
 
-    Spool::records($sid, 'id');
-    is(Spool::get($sid, 0)->[0]{val}, '', 'NULL は "" として spool される');
+    is(Spool::get($sid, 0)->{val}, '', 'NULL は "" として spool される');
     Spool::remove($sid);
     $db->close();
 };
 
-# --- spec#28. ORDER BY なしで die ---
-subtest 'spool は ORDER BY なしで die' => sub {
+# --- spec#29. ソート漏れの records 確定で die ---
+subtest 'spool はソート漏れの records 確定で die' => sub {
     my $db = DBOBJ->new('develop');
-    $db->run("CREATE TEMP TABLE ${TBL}_no (id INT)");
-    $db->run("SELECT id FROM ${TBL}_no");
-    throws_ok { $db->spool("${SPID}E") } qr/DBOBJ\.spool/, 'ORDER BY がない SQL で die';
-    $db->close();
-};
-
-# --- spec#29. 位置指定（ORDER BY 1）で die ---
-subtest 'spool は位置指定 ORDER BY で die' => sub {
-    my $db = DBOBJ->new('develop');
-    $db->run("CREATE TEMP TABLE ${TBL}_pos (id INT)");
-    $db->run("SELECT id FROM ${TBL}_pos ORDER BY 1");
-    throws_ok { $db->spool("${SPID}F") } qr/DBOBJ\.spool/, '位置指定で die';
-    $db->close();
-};
-
-# --- spec#30. 式の ORDER BY で die ---
-subtest 'spool は式の ORDER BY で die' => sub {
-    my $db = DBOBJ->new('develop');
-    $db->run("CREATE TEMP TABLE ${TBL}_ex (val TEXT)");
-    $db->run("SELECT val FROM ${TBL}_ex ORDER BY lower(val)");
-    throws_ok { $db->spool("${SPID}G") } qr/DBOBJ\.spool/, '式で die';
-    $db->close();
-};
-
-# --- spec#31. SELECT 句にない列の ORDER BY で die ---
-subtest 'spool は SELECT 句にない列の ORDER BY で die' => sub {
-    my $db = DBOBJ->new('develop');
-    $db->run("CREATE TEMP TABLE ${TBL}_nc (dept TEXT, id INT)");
-    $db->run("SELECT dept FROM ${TBL}_nc ORDER BY id");
-    throws_ok { $db->spool("${SPID}H") } qr/DBOBJ\.spool/, 'SELECT 句にない列で die';
-    $db->close();
-};
-
-# --- spec#32. サブクエリ内にしか ORDER BY がない SQL で die ---
-subtest 'spool はサブクエリ内のみの ORDER BY で die' => sub {
-    my $db = DBOBJ->new('develop');
-    $db->run("CREATE TEMP TABLE ${TBL}_sub (id INT)");
-    $db->run("SELECT id FROM (SELECT id FROM ${TBL}_sub ORDER BY id) s");
-    throws_ok { $db->spool("${SPID}I") } qr/DBOBJ\.spool/, 'トップレベルに ORDER BY がなく die';
-    $db->close();
-};
-
-# --- spec#33. 文字列リテラル内の order by を誤認しない ---
-subtest 'spool は文字列リテラル内の order by を誤認しない' => sub {
-    my $db = DBOBJ->new('develop');
-    $db->run("CREATE TEMP TABLE ${TBL}_lit (id INT)");
-    $db->run("SELECT id, 'order by id' AS note FROM ${TBL}_lit");
-    throws_ok { $db->spool("${SPID}J") } qr/DBOBJ\.spool/, 'リテラル内はトップレベルと見なさない';
-    $db->close();
-};
-
-# --- spec#34. 小文字・修飾付き・複数列・LIMIT 付きの解析 ---
-subtest 'spool の ORDER BY 解析は書式に依存しない' => sub {
-    my $db = DBOBJ->new('develop');
-    my $sid = "${SPID}K";
-    $db->run("CREATE TEMP TABLE ${TBL}_fmt (dept TEXT, id INT)");
-    $db->run("INSERT INTO ${TBL}_fmt VALUES ('a', 1), ('b', 2)");
-    $db->run("select dept, id from ${TBL}_fmt order by dept desc nulls last,\n id asc limit 10");
-    $db->spool($sid);
-
-    is_deeply($db->{ordercols}, ['dept', 'id'], '修飾・改行・LIMIT があっても列名へ解決される');
+    my $sid = "${SPID}F";
+    $db->run("CREATE TEMP TABLE ${TBL}_us (id INT, dept TEXT)");
+    $db->run("INSERT INTO ${TBL}_us VALUES (1, 'b'), (2, 'a'), (3, 'b')");
+    $db->run("SELECT dept, id FROM ${TBL}_us ORDER BY id");
+    dies_ok { $db->spool($sid, 'dept') } 'キー再出現で die（Spool の検知）';
     Spool::remove($sid);
     $db->close();
 };
 
-# --- spec#35. bind 付き prepare + execute 経由の spool ---
+# --- spec#30. grouping の順序違反で die ---
+subtest 'spool は grouping の順序違反で die' => sub {
+    my $db = DBOBJ->new('develop');
+    my $sid = "${SPID}G";
+    $db->run("CREATE TEMP TABLE ${TBL}_ug (id INT, dept TEXT)");
+    $db->run("INSERT INTO ${TBL}_ug VALUES (1, 'b'), (2, 'a'), (3, 'b')");
+    $db->run("SELECT dept, id FROM ${TBL}_ug ORDER BY id");
+    dies_ok { $db->spool($sid, ['dept']) } 'グループ列の再出現で die（Spool の検知）';
+    Spool::remove($sid);
+    $db->close();
+};
+
+# --- spec#31. schema 外の列名で die ---
+subtest 'spool は schema 外の列名で die' => sub {
+    my $db = DBOBJ->new('develop');
+    my $sid = "${SPID}H";
+    $db->run("CREATE TEMP TABLE ${TBL}_nc (id INT)");
+    $db->run("INSERT INTO ${TBL}_nc VALUES (1)");
+    $db->run("SELECT id FROM ${TBL}_nc ORDER BY id");
+    dies_ok { $db->spool($sid, 'nocol') } '存在しない列名で die（Spool の検知）';
+    Spool::remove($sid);
+    $db->close();
+};
+
+# --- spec#32. confirm の形の混在で die ---
+subtest 'spool は confirm の形の混在で die' => sub {
+    my $db = DBOBJ->new('develop');
+    my $sid = "${SPID}I";
+    $db->run("CREATE TEMP TABLE ${TBL}_mx (dept TEXT, id INT)");
+    $db->run("INSERT INTO ${TBL}_mx VALUES ('a', 1)");
+    $db->run("SELECT dept, id FROM ${TBL}_mx ORDER BY dept, id");
+    dies_ok { $db->spool($sid, 'dept', ['id']) } '文字列と配列リファレンスの混在で die';
+    Spool::remove($sid);
+    $db->close();
+};
+
+# --- spec#33. bind 付き prepare + execute 経由の spool ---
 subtest 'spool は bind 付きでも動作する' => sub {
     my $db = DBOBJ->new('develop');
-    my $sid = "${SPID}L";
+    my $sid = "${SPID}J";
     $db->run("CREATE TEMP TABLE ${TBL}_bd (dept TEXT, id INT)");
     $db->run("INSERT INTO ${TBL}_bd VALUES ('a', 1), ('b', 2), ('c', 0)");
     $db->prepare("SELECT dept, id FROM ${TBL}_bd WHERE id > ? ORDER BY dept");
     $db->execute(0);
-    $db->spool($sid);
+    $db->spool($sid, 'dept');
 
-    is(Spool::records($sid, 'dept'), 2, 'bind で絞り込んだ結果が spool される');
+    is(Spool::count($sid), 2, 'bind で絞り込んだ結果が spool される');
     Spool::remove($sid);
     $db->close();
 };
 
-# --- spec#36. prepare を経ずに spool で die ---
+# --- spec#34. prepare を経ずに spool で die ---
 subtest 'spool は prepare なしで die' => sub {
     my $db = DBOBJ->new('develop');
-    throws_ok { $db->spool("${SPID}M") } qr/DBOBJ\.spool/, 'prepare していない状態で die';
+    dies_ok { $db->spool("${SPID}K") } 'prepare していない状態で die';
     $db->close();
 };
 
-# --- spec#37. 0件でも spool は作られ records で 0 件確定 ---
+# --- spec#35. 0件でも確定でき count == 0 ---
 subtest 'spool 0件' => sub {
     my $db = DBOBJ->new('develop');
-    my $sid = "${SPID}N";
+    my $sid = "${SPID}L";
     $db->run("CREATE TEMP TABLE ${TBL}_z (id INT)");
     $db->run("SELECT id FROM ${TBL}_z ORDER BY id");
-    my $ret = $db->spool($sid);
-    is($ret, $sid, '0件でも spool_id を返す');
+    is($db->spool($sid, 'id'), $sid, '0件でも spool_id を返す');
 
-    Spool::records($sid, 'id');
-    is(Spool::count($sid), 0, 'records で 0 件確定できる');
+    is(Spool::count($sid), 0, '0 件で確定できる');
     Spool::remove($sid);
     $db->close();
 };
 
-# --- spec#38. spool_id 重複で die（Spool の die が伝播）---
+# --- spec#36. spool_id 重複で die（Spool の die が伝播）---
 subtest 'spool は spool_id 重複で die' => sub {
     my $db = DBOBJ->new('develop');
-    my $sid = "${SPID}O";
+    my $sid = "${SPID}M";
     $db->run("CREATE TEMP TABLE ${TBL}_dup (id INT)");
     $db->run("INSERT INTO ${TBL}_dup VALUES (1)");
     $db->run("SELECT id FROM ${TBL}_dup ORDER BY id");
-    $db->spool($sid);
+    $db->spool($sid, 'id');
 
     $db->run("SELECT id FROM ${TBL}_dup ORDER BY id");
-    dies_ok { $db->spool($sid) } '既存の spool_id で die';
+    dies_ok { $db->spool($sid, 'id') } '既存の spool_id で die';
     Spool::remove($sid);
+    $db->close();
+};
+
+# --- spec#37. in() 単一 TSV（DDL・\copy・keys・戻り値）---
+subtest 'in 単一 TSV' => sub {
+    my $db = DBOBJ->new('develop');
+    my $name = "${TBL}_in1";
+    mkset($DIR, $name,
+        ddl  => sprintf($DDL, $name, $name),
+        tsv  => "1\ta\n2\tb",
+        keys => "ALTER TABLE public.$name ADD PRIMARY KEY (id);\n",
+    );
+    is($db->in($DIR, $name), $db, 'in() が $self を返す');
+
+    $db->run("SELECT id, val FROM public.$name ORDER BY id");
+    is_deeply($db->arrays(), [[1, 'a'], [2, 'b']], '投入した行数・内容が DB と一致');
+    $db->run("DROP TABLE public.$name");
+    $db->close();
+};
+
+# --- spec#38. in() 分割 TSV（連番投入・途切れで終了）---
+subtest 'in 分割 TSV' => sub {
+    my $db = DBOBJ->new('develop');
+    my $name = "${TBL}_in2";
+    mkset($DIR, $name,
+        ddl        => sprintf($DDL, $name, $name),
+        '0000.tsv' => "1\ta",
+        '0001.tsv' => "2\tb",
+        '0003.tsv' => "9\tz",
+    );
+    $db->in($DIR, $name);
+
+    $db->run("SELECT id FROM public.$name ORDER BY id");
+    is_deeply([$db->list()], [1, 2], '0000・0001 が投入され、番号が途切れた 0003 は投入されない');
+    $db->run("DROP TABLE public.$name");
+    $db->close();
+};
+
+# --- spec#39. in() schema.name 形式 ---
+subtest 'in schema.name 形式' => sub {
+    my $db = DBOBJ->new('develop');
+    my $schema = "dbobj_s$$";
+    my $name = "${TBL}_in3";
+    $db->run("CREATE SCHEMA $schema");
+    # ディレクトリ名・ファイル名は name 部分のみ（schema は付かない）
+    mkset($DIR, $name,
+        ddl => "CREATE TABLE $schema.$name (id INT, val TEXT);\n",
+        tsv => "1\ta",
+    );
+    $db->in($DIR, "$schema.$name");
+
+    $db->run("SELECT val FROM $schema.$name WHERE id = 1");
+    is($db->get(), 'a', 'schema 付きテーブルへ投入される');
+    $db->run("DROP SCHEMA $schema CASCADE");
+    $db->close();
+};
+
+# --- spec#40. in() DDL の優先順（.sql > .ddl）---
+subtest 'in は .sql を .ddl より優先する' => sub {
+    my $db = DBOBJ->new('develop');
+    my $name = "${TBL}_in4";
+    # .ddl が使われたら SQL エラーで die するため、.sql の優先が検証できる
+    mkset($DIR, $name,
+        sql => sprintf($DDL, $name, $name),
+        ddl => "THIS IS NOT SQL;\n",
+    );
+    lives_ok { $db->in($DIR, $name) } '.sql が使われ die しない';
+
+    $db->run("SELECT COUNT(*) FROM public.$name");
+    is($db->get(), 0, '.sql の DDL でテーブルが作られている');
+    $db->run("DROP TABLE public.$name");
+    $db->close();
+};
+
+# --- spec#41. in() DDL ファイル不在で die ---
+subtest 'in は DDL 不在で die' => sub {
+    my $db = DBOBJ->new('develop');
+    my $name = "${TBL}_in5";
+    mkset($DIR, $name, tsv => "1\ta");
+    throws_ok { $db->in($DIR, $name) } qr/Psql\.in/, 'DDL がどちらも存在せず die';
+    $db->close();
+};
+
+# --- spec#42. in() TSV 不在はスキップ（0件で作成）---
+subtest 'in は TSV 不在をスキップする' => sub {
+    my $db = DBOBJ->new('develop');
+    my $name = "${TBL}_in6";
+    mkset($DIR, $name, ddl => sprintf($DDL, $name, $name));
+    lives_ok { $db->in($DIR, $name) } 'TSV がなくても die しない';
+
+    $db->run("SELECT COUNT(*) FROM public.$name");
+    is($db->get(), 0, 'テーブルは 0 件で作成される');
+    $db->run("DROP TABLE public.$name");
+    $db->close();
+};
+
+# --- spec#43. in() keys 不在はスキップ ---
+subtest 'in は keys 不在をスキップする' => sub {
+    my $db = DBOBJ->new('develop');
+    my $name = "${TBL}_in7";
+    mkset($DIR, $name,
+        ddl => sprintf($DDL, $name, $name),
+        tsv => "1\ta",
+    );
+    lives_ok { $db->in($DIR, $name) } 'keys がなくても die しない';
+    $db->run("DROP TABLE public.$name");
+    $db->close();
+};
+
+# --- spec#44. in() keys で PRIMARY KEY 付与 ---
+subtest 'in は keys で PRIMARY KEY を付与する' => sub {
+    my $db = DBOBJ->new('develop');
+    my $name = "${TBL}_in8";
+    mkset($DIR, $name,
+        ddl  => sprintf($DDL, $name, $name),
+        tsv  => "1\ta",
+        keys => "ALTER TABLE public.$name ADD PRIMARY KEY (id);\n",
+    );
+    $db->in($DIR, $name);
+
+    $db->run("SELECT COUNT(*) FROM pg_constraint"
+        . " WHERE conrelid = 'public.$name'::regclass AND contype = 'p'");
+    is($db->get(), 1, 'PRIMARY KEY 制約が付与されている');
+    $db->run("DROP TABLE public.$name");
+    $db->close();
+};
+
+# --- spec#45. in() DDL の SQL エラーで die（ON_ERROR_STOP=1）---
+subtest 'in は DDL の SQL エラーで die' => sub {
+    my $db = DBOBJ->new('develop');
+    my $name = "${TBL}_in9";
+    mkset($DIR, $name, ddl => "THIS IS NOT SQL;\n");
+    throws_ok { $db->in($DIR, $name) } qr/exit code/, '不正な SQL で die';
+    $db->close();
+};
+
+# --- spec#46. in() \copy の失敗で die ---
+subtest 'in は copy の失敗で die' => sub {
+    my $db = DBOBJ->new('develop');
+    my $name = "${TBL}_in10";
+    # 2 カラムのテーブルに 3 カラムの TSV を投入して失敗させる
+    mkset($DIR, $name,
+        ddl => sprintf($DDL, $name, $name),
+        tsv => "1\ta\tEXTRA",
+    );
+    throws_ok { $db->in($DIR, $name) } qr/exit code/, '列数不一致で die';
+    $db->run("DROP TABLE public.$name");
+    $db->close();
+};
+
+# --- spec#47. in() 日本語データが化けない ---
+subtest 'in は日本語データが化けない' => sub {
+    my $db = DBOBJ->new('develop');
+    my $name = "${TBL}_in11";
+    my $jp = decode('UTF-8', 'こんにちは世界');
+    mkset($DIR, $name,
+        ddl => sprintf($DDL, $name, $name),
+        tsv => "1\t$jp",
+    );
+    $db->in($DIR, $name);
+
+    $db->run("SELECT val FROM public.$name WHERE id = 1");
+    is($db->get(), $jp, '日本語が DB のカラム値として化けずに取得できる');
+    $db->run("DROP TABLE public.$name");
+    $db->close();
+};
+
+# --- spec#48. in() NULL（\N）の投入と取得 ---
+subtest 'in は NULL を投入でき取得時に空文字になる' => sub {
+    my $db = DBOBJ->new('develop');
+    my $name = "${TBL}_in12";
+    mkset($DIR, $name,
+        ddl => sprintf($DDL, $name, $name),
+        tsv => "1\t\\N",
+    );
+    lives_ok { $db->in($DIR, $name) } 'NULL（\\N）を含む TSV が投入できる';
+
+    $db->run("SELECT val FROM public.$name WHERE id = 1");
+    is($db->get(), '', 'NULL は既存規則で空文字として取得される');
+    $db->run("DROP TABLE public.$name");
+    $db->close();
+};
+
+# --- spec#49. 接続情報の連動（new() 後の環境変数変更に影響されない）---
+subtest 'psql は new() 時の接続情報を使う' => sub {
+    my $db = DBOBJ->new('develop');
+    local @ENV{qw(PGHOST PGPORT PGUSER)} = ('broken_host', '1', 'broken_user');
+    lives_ok { $db->psql('test/insert.sql') } 'new() 後に環境変数を壊しても psql() が動く';
     $db->close();
 };
 
