@@ -76,8 +76,8 @@ sub new {
         dying("DBOBJ.new: $var is not set") unless defined $ENV{$var} && $ENV{$var} ne '';
     }
 
-    # Capture the connection identity once; DBI and psql both use these
-    # values, so later changes to %ENV cannot split the two apart.
+    # 接続情報はここで一度だけ取り込む。DBI も psql もこの値を使うため、
+    # 以後 %ENV が変わっても両者の接続先がズレることはない。
     my ($host, $port, $user) = @ENV{qw(PGHOST PGPORT PGUSER)};
 
     my $dsn = "dbi:Pg:dbname=$dbname;host=$host;port=$port";
@@ -148,8 +148,8 @@ sub arrays {
     return [ map { [ map { $_ // '' } @$_ ] } @$rows ];
 }
 
-# Convert statement-handle column info into MetaAoh order notation
-# (NAME for str, NAME# for num): the single rule shared by hashes() and spool().
+# ステートメントハンドルの列情報を MetaAoh の order 記法（str は NAME、
+# num は NAME#）へ変換する。hashes() と spool() が共有する唯一の規則。
 sub sth2order {
     my ($sth) = @_;
     my ($names, $types) = ($sth->{NAME}, $sth->{TYPE});
@@ -164,7 +164,7 @@ sub sth2order {
 sub hashes {
     my ($self) = @_;
     my $rows = $self->{sth}->fetchall_arrayref({});
-    # Replace undef with '' to satisfy MetaAoh's no-undef contract.
+    # MetaAoh の「undef を含まない」契約を満たすため undef を '' へ置き換える。
     for my $row (@$rows) {
         $row->{$_} //= '' for keys %$row;
     }
@@ -181,9 +181,9 @@ sub spool {
     dying("DBOBJ.spool: " . $self->{sth}->errstr) if $self->{sth}->err;
     $writer->close();
 
-    # Dispatch the confirm mode on the argument shape, mirroring Spool's
-    # confirm API. Correctness (column names, sort order) is not checked
-    # here; Spool detects violations at runtime.
+    # Spool の confirm API の引数の形に合わせて確定モードを振り分ける。
+    # 列名や並び順の正しさはここでは確認しない。違反は Spool が実行時に
+    # die で検知する。
     if    (!@confirm)                  { Spool::lines($spool_id) }
     elsif (ref $confirm[0] eq 'ARRAY') { Spool::grouping($spool_id, @confirm) }
     else                               { Spool::records($spool_id, @confirm) }
@@ -247,8 +247,8 @@ sub run {
 
 sub in {
     my ($dbo, $dir, $tbl) = @_;
-    # Split "schema.name"; an unqualified table goes to public.
-    # Directory and file names use the name part only.
+    # "schema.name" 形式を schema と name に分離する。schema なしは public。
+    # ディレクトリ名・ファイル名には name 部分のみを使う。
     my ($schema, $name) = $tbl =~ /^(\w+)\.(\w+)$/ ? ($1, $2) : ('public', $tbl);
     my $base = "$dir/$name/$name";
 
@@ -258,7 +258,7 @@ sub in {
     CommonIO::log('info', "sql> \\i $ddl");
     run($dbo, '-f', $ddl);
 
-    # A single TSV wins; otherwise follow the %04d sequence until it breaks.
+    # 単一 TSV を優先し、なければ %04d の連番を途切れるまで辿る。
     my @tsv;
     if (-f "$base.tsv") {
         @tsv = ("$base.tsv");

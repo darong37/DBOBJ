@@ -174,21 +174,21 @@ subtest 'NULL を空文字に変換' => sub {
     $db->run("CREATE TEMP TABLE ${TBL}_null (id INT, val TEXT)");
     $db->run("INSERT INTO ${TBL}_null VALUES (1, NULL)");
 
-    # get
+    # get の検証
     $db->run("SELECT val FROM ${TBL}_null");
     is($db->get(), '', 'get() で NULL → ""');
 
-    # list
+    # list の検証
     $db->run("SELECT val FROM ${TBL}_null");
     my @l = $db->list();
     is($l[0], '', 'list() で NULL → ""');
 
-    # arrays
+    # arrays の検証
     $db->run("SELECT val FROM ${TBL}_null");
     my $a = $db->arrays();
     is($a->[0][0], '', 'arrays() で NULL → ""');
 
-    # hashes() returns metaAoh; row 0 is the first data row
+    # hashes() は metaAoh を返す。0 行目が最初のデータ行
     $db->run("SELECT val FROM ${TBL}_null");
     my $m = $db->hashes();
     is($m->[0]{val}, '', 'hashes() で NULL → ""');
