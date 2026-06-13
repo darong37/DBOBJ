@@ -1,7 +1,7 @@
 # DBOBJ Test Spec
 Date: 2026-06-12
 
-テストスイートの仕様を定義する。仕様本体は [spec.md](spec.md) を参照すること。
+テストスイートの仕様を定義する。仕様本体は [DBOBJ.spec.md](DBOBJ.spec.md) を参照すること。
 
 ## テスト方針
 
