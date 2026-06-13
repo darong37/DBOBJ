@@ -46,7 +46,7 @@ flowchart TB
         spool_open["Spool->open(spool_id, @order)"]
         spool_add["writer->add(row)"]
         spool_close["writer->close()"]
-        spool_lines["Spool::lines(spool_id)"]
+        spool_lines["Spool::line(spool_id)"]
         spool_records["Spool::records(spool_id, @cols)"]
         spool_grouping["Spool::grouping(spool_id, @groups)"]
     end
@@ -148,7 +148,7 @@ flowchart TB
     loop --> spool_add["writer->add(row)"]
     spool --> spool_close["writer->close()"]
     spool --> dispatch{"@confirm の形"}
-    dispatch -->|"空"| spool_lines["Spool::lines"]
+    dispatch -->|"空"| spool_lines["Spool::line"]
     dispatch -->|"文字列の並び"| spool_records["Spool::records"]
     dispatch -->|"配列リファレンスの並び"| spool_grouping["Spool::grouping"]
 ```
@@ -184,7 +184,7 @@ flowchart TB
 | `list()` | ― | `dying()` | `sth->fetchall_arrayref` |
 | `arrays()` | ― | ― | `sth->fetchall_arrayref` |
 | `hashes()` | `sth2order()` | `MetaAoh->new` | `sth->fetchall_arrayref` |
-| `spool()` | `sth2order()` | `dying()`, `Spool->open` / `add` / `close`, `Spool::lines` / `records` / `grouping` | `sth->fetchrow_hashref` |
+| `spool()` | `sth2order()` | `dying()`, `Spool->open` / `add` / `close`, `Spool::line` / `records` / `grouping` | `sth->fetchrow_hashref` |
 | `psql()` | `DBOBJ::Psql::run` | ― | ― |
 | `in()` | `DBOBJ::Psql::in` | ― | ― |
 | `close()` | ― | ― | `sth->finish`, `dbh->disconnect` |

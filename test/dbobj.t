@@ -168,6 +168,43 @@ subtest 'hashes 0件で空の metaAoh' => sub {
     $db->close();
 };
 
+# --- hashing が素の AoH を返す ---
+subtest 'hashing は素の AoH を返す' => sub {
+    my $db = DBOBJ->new('develop');
+    $db->run("CREATE TEMP TABLE ${TBL}_hi (id INT, val TEXT)");
+    $db->run("INSERT INTO ${TBL}_hi VALUES (1, 'a'), (2, 'b')");
+    $db->run("SELECT id, val FROM ${TBL}_hi ORDER BY id");
+    my @rows = $db->hashing();
+
+    is(scalar @rows, 2, '要素数は行数');
+    ok(!MetaAoh::is_metaAOH(\@rows), 'metaAoh ではない素の配列');
+    is_deeply($rows[0], {id => 1, val => 'a'}, '1行目はハッシュリファレンス');
+    is_deeply($rows[1], {id => 2, val => 'b'}, '2行目はハッシュリファレンス');
+    $db->close();
+};
+
+subtest 'hashing 0件で空リスト' => sub {
+    my $db = DBOBJ->new('develop');
+    $db->run("CREATE TEMP TABLE ${TBL}_hi0 (id INT, val TEXT)");
+    $db->run("SELECT id, val FROM ${TBL}_hi0");
+    my @rows = $db->hashing();
+
+    is(scalar @rows, 0, '0件なら空リスト');
+    $db->close();
+};
+
+subtest 'hashing は hashes()->toAoh() と一致' => sub {
+    my $db = DBOBJ->new('develop');
+    $db->run("CREATE TEMP TABLE ${TBL}_hie (id INT, val TEXT)");
+    $db->run("INSERT INTO ${TBL}_hie VALUES (1, 'x'), (2, 'y')");
+    $db->run("SELECT id, val FROM ${TBL}_hie ORDER BY id");
+    my @rows = $db->hashing();
+    $db->run("SELECT id, val FROM ${TBL}_hie ORDER BY id");
+    my $aoh = $db->hashes()->toAoh();
+    is_deeply(\@rows, $aoh, 'hashing は hashes の平坦化と一致');
+    $db->close();
+};
+
 # --- spec#14. NULL → '' への変換確認 ---
 subtest 'NULL を空文字に変換' => sub {
     my $db = DBOBJ->new('develop');

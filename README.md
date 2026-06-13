@@ -30,6 +30,7 @@ The file also contains the `DBOBJ::Psql` package, so a single file is all you ne
 | `list()` | Fetch all rows of a single column as a flat array |
 | `arrays()` | Fetch all rows as AoA (Array of Arrays) |
 | `hashes()` | Fetch all rows as a metaAoh (MetaAoh object) |
+| `hashing()` | Fetch all rows as a plain AoH (**discouraged; legacy support only** — use `hashes()` for new code) |
 | `spool($spool_id, @confirm)` | Stream all rows into a Spool, confirm it and return the spool_id |
 | `psql($sqlfile)` | Execute a SQL file via psql subprocess |
 | `in($dir, $tbl)` | Load a table set (DDL, TSV and keys files) into the DB via psql |

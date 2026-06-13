@@ -63,7 +63,7 @@ prove -lr test/
 | 22 | `psql` で NOTICE が出ても die しないこと |
 | 23 | `hashes` の返り値に対して呼び出し側で `group()` が機能すること（DBOBJ の出力が MetaAoh の前提条件を満たす統合確認） |
 | 24 | records 確定：`spool($spool_id, 'dept')` が確定まで行い `$spool_id` を返すこと。`Spool::count` / `get` で内容が DB と一致すること |
-| 25 | lines 確定：引数なしの `spool($spool_id)` が `ORDER BY` のない SQL でも通り、行単位の item で確定すること |
+| 25 | line 確定：引数なしの `spool($spool_id)` が `Spool::line` で `ORDER BY` のない SQL でも通り、行単位の item で確定すること |
 | 26 | grouping 確定：`spool($spool_id, ['dept'])` が階層 item（キー列 + `'*'` 配下）で確定すること |
 | 27 | schema 生成：spool の `meta.do` の `order` が num カラム `NAME#`・str カラム `NAME` の規則で生成されていること |
 | 28 | NULL を含む行が `''` へ置き換えられて spool され、取得値が `''` であること |
@@ -88,3 +88,6 @@ prove -lr test/
 | 47 | 日本語データ（マルチバイト文字）が化けずに DB のカラム値として取得できること |
 | 48 | NULL（`\N`）を含む TSV が投入でき、取得時に既存規則で `''` へ置き換えられること |
 | 49 | `new()` 後に `PGHOST`・`PGPORT`・`PGUSER` を壊しても `psql()` が動くこと（DBI と psql の接続情報が `new()` 時の取り込み値で連動していることの検証） |
+| 50 | `hashing()`（非推奨・レガシー対応）が素の AoH を返すこと（`MetaAoh::is_metaAOH` が偽・各要素がハッシュリファレンス・要素数が行数） |
+| 51 | `hashing()` が0件で空リストを返すこと |
+| 52 | `hashing()` が `hashes()->toAoh()` と一致すること（薄い変換の確認） |

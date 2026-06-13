@@ -171,6 +171,15 @@ sub hashes {
     return MetaAoh->new($rows, sth2order($self->{sth}));
 }
 
+sub hashing {
+    my ($self) = @_;
+    # レガシー対応の非推奨メソッド。新規コードは hashes()(metaAoh)を使うこと。
+    # hashes() の metaAoh を平坦化した素の AoH を返す。undef→'' 等の値の扱いは
+    # hashes() に従い、独自の取得処理は持たない。0件なら空リスト。
+    # レガシー専用のため効率最適化はしない(metaAoh 構築を経由する)。
+    return @{ $self->hashes()->toAoh() };
+}
+
 sub spool {
     my ($self, $spool_id, @confirm) = @_;
     my $writer = Spool->open($spool_id, sth2order($self->{sth}));
@@ -184,7 +193,7 @@ sub spool {
     # Spool の confirm API の引数の形に合わせて確定モードを振り分ける。
     # 列名や並び順の正しさはここでは確認しない。違反は Spool が実行時に
     # die で検知する。
-    if    (!@confirm)                  { Spool::lines($spool_id) }
+    if    (!@confirm)                  { Spool::line($spool_id) }
     elsif (ref $confirm[0] eq 'ARRAY') { Spool::grouping($spool_id, @confirm) }
     else                               { Spool::records($spool_id, @confirm) }
     return $spool_id;
